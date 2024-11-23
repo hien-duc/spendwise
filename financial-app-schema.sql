@@ -1,163 +1,282 @@
--- Enable UUID extension
+/*
+SpendWise Financial App Database Schema
+=====================================
+
+This schema supports a comprehensive financial tracking application with the following features:
+
+1. Transaction Types
+   - Expense: Track daily spending
+   - Income: Monitor earnings
+   - Investment: Track investment activities
+
+2. Annual Reports
+   - Monthly breakdown of transactions
+   - Category-wise analysis
+   - Percentage distribution
+   - Transaction counts
+
+3. Category Management
+   - Custom icons and colors
+   - Default categories for new users
+   - Support for all transaction types
+   - Display order for UI
+
+4. Security
+   - OAuth integration (GitHub, Google)
+   - Row Level Security
+   - User data isolation
+
+Main Features Supported:
+----------------------
+1. Annual Report View
+   - Bar chart showing monthly totals
+   - Supports all transaction types
+   - Year navigation
+   - Transaction counts
+
+2. Category Annual Report
+   - Donut chart for category distribution
+   - Percentage breakdown
+   - Category icons and colors
+   - Transaction type tabs
+*/
+
+-- Enable UUID generation
 create extension if not exists "uuid-ossp";
 
--- Users table (extends Supabase auth.users)
-create table public.profiles (
-    id uuid references auth.users on delete cascade not null primary key,  -- From auth.users
-    full_name text,      -- From OAuth provider's name/full_name
-    avatar_url text,     -- From OAuth provider's avatar_url/picture
-    email text,          -- From OAuth provider's email
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,  -- From auth.users created_at
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null   -- Managed by trigger
-);
+-- Transaction type definitions
+-- Used to categorize financial activities
+create type transaction_type as enum ('expense', 'income', 'investment');
+create type transaction_status as enum ('pending', 'completed', 'cancelled');
+create type recurring_period as enum ('daily', 'weekly', 'monthly', 'yearly');
 
--- Categories for transactions
-create table public.categories (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    name text not null,
-    type text not null check (type in ('expense', 'income', 'investment')),
-    icon text not null,           -- Store icon name/identifier
-    color text not null,          -- Store hex color code
-    is_default boolean default false,  -- To identify pre-set categories
-    display_order integer,        -- For controlling category display order
+-- User profiles table
+-- Stores user information from OAuth providers (GitHub, Google)
+create table if not exists profiles (
+    id uuid references auth.users on delete cascade primary key,
+    full_name text,        -- From OAuth provider
+    avatar_url text,       -- User's profile picture
+    email text,           -- User's email address
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- Insert default categories
-create or replace function public.create_default_categories(user_id uuid)
-returns void as $$
+-- Categories table
+-- Defines transaction categories with visual elements for UI
+create table if not exists categories (
+    id uuid primary key default uuid_generate_v4(),
+    user_id uuid references profiles(id) on delete cascade not null,
+    name text not null,                -- Category name (e.g., 'Food', 'Salary')
+    type transaction_type not null,    -- Category type (expense/income/investment)
+    icon text not null,                -- Icon name for UI (e.g., 'restaurant', 'briefcase')
+    color text not null,               -- Hex color code for UI (e.g., '#FF6B6B')
+    display_order integer default 0,    -- Order in UI lists
+    is_default boolean default false,   -- Whether it's a system-provided category
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Transactions table
+-- Stores all financial transactions
+create table if not exists transactions (
+    id uuid primary key default uuid_generate_v4(),
+    user_id uuid references profiles(id) on delete cascade not null,
+    category_id uuid references categories(id) on delete set null,
+    type transaction_type not null,     -- Transaction type (expense/income/investment)
+    amount decimal(12,2) not null check (amount >= 0),  -- Transaction amount
+    date timestamp with time zone not null,             -- Transaction date
+    notes text,                                         -- Optional transaction notes
+    status transaction_status default 'completed',      -- Transaction status
+    recurring_period recurring_period,                  -- For recurring transactions
+    recurring_end_date timestamp with time zone,        -- End date for recurring transactions
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Annual Report Function
+-- Returns monthly breakdown of transactions for bar chart
+create or replace function get_annual_report(
+    user_id_param uuid,
+    year_param integer,
+    type_param transaction_type
+)
+returns table (
+    month integer,         -- Month number (1-12)
+    month_name text,       -- Month name (January, February, etc.)
+    amount decimal(12,2),  -- Total amount for the month
+    transaction_count integer  -- Number of transactions in the month
+) as $$
 begin
-    -- Expense categories (matching MoneyNote)
-    insert into public.categories (name, type, icon, color, is_default, display_order, user_id) values
-    ('Food', 'expense', 'food', '#FF9800', true, 1, user_id),
-    ('Houseware', 'expense', 'home', '#4CAF50', true, 2, user_id),
-    ('Clothes', 'expense', 'clothes', '#2196F3', true, 3, user_id),
-    ('Cosmetic', 'expense', 'cosmetic', '#E91E63', true, 4, user_id),
-    ('Exchange', 'expense', 'exchange', '#9C27B0', true, 5, user_id),
-    ('Medical', 'expense', 'medical', '#F44336', true, 6, user_id),
-    ('Education', 'expense', 'education', '#3F51B5', true, 7, user_id),
-    ('Electricity', 'expense', 'electricity', '#FFC107', true, 8, user_id),
-    ('Transportation', 'expense', 'transport', '#795548', true, 9, user_id),
-    ('Contacts', 'expense', 'contacts', '#607D8B', true, 10, user_id),
-    ('Housing', 'expense', 'house', '#009688', true, 11, user_id),
-    -- Income categories
-    ('Salary', 'income', 'salary', '#4CAF50', true, 1, user_id),
-    ('Bonus', 'income', 'bonus', '#8BC34A', true, 2, user_id),
-    ('Investment Return', 'income', 'investment', '#00BCD4', true, 3, user_id),
-    -- Investment categories (keeping your investment feature)
-    ('Stocks', 'investment', 'stocks', '#3F51B5', true, 1, user_id),
-    ('Crypto', 'investment', 'crypto', '#673AB7', true, 2, user_id),
-    ('Real Estate', 'investment', 'real-estate', '#009688', true, 3, user_id);
+    return query
+    with all_months as (
+        select generate_series(1, 12) as month_num
+    )
+    select 
+        m.month_num as month,
+        to_char(make_date(year_param, m.month_num, 1), 'Month') as month_name,
+        coalesce(sum(t.amount), 0.00) as amount,
+        count(t.id) as transaction_count
+    from all_months m
+    left join transactions t on 
+        extract(month from t.date) = m.month_num
+        and extract(year from t.date) = year_param
+        and t.user_id = user_id_param
+        and t.type = type_param
+    group by m.month_num
+    order by m.month_num;
 end;
 $$ language plpgsql;
 
--- Modify handle_new_user to create default categories
-create or replace function public.handle_new_user()
+-- Category Annual Report Function
+-- Returns category breakdown for donut chart
+create or replace function get_category_annual_report(
+    user_id_param uuid,
+    year_param integer,
+    type_param transaction_type
+)
+returns table (
+    category_id uuid,          -- Category identifier
+    category_name text,        -- Category name
+    category_icon text,        -- Icon for UI
+    category_color text,       -- Color for UI
+    total_amount decimal(12,2),-- Total amount in category
+    percentage decimal(5,2),   -- Percentage of total (for donut chart)
+    transaction_count integer  -- Number of transactions
+) as $$
+declare
+    total_amount_all_categories decimal(12,2);
+begin
+    -- Calculate total amount for percentage calculation
+    select coalesce(sum(t.amount), 0.00)
+    into total_amount_all_categories
+    from transactions t
+    where t.user_id = user_id_param
+    and extract(year from t.date) = year_param
+    and t.type = type_param;
+
+    return query
+    select 
+        c.id as category_id,
+        c.name as category_name,
+        c.icon as category_icon,
+        c.color as category_color,
+        coalesce(sum(t.amount), 0.00) as total_amount,
+        case 
+            when total_amount_all_categories > 0 then 
+                round((sum(t.amount) / total_amount_all_categories * 100)::numeric, 2)
+            else 0.00 
+        end as percentage,
+        count(t.id) as transaction_count
+    from categories c
+    left join transactions t on 
+        t.category_id = c.id 
+        and extract(year from t.date) = year_param
+        and t.type = type_param
+        and t.user_id = user_id_param
+    where c.user_id = user_id_param
+    and c.type = type_param
+    group by c.id, c.name, c.icon, c.color
+    having sum(t.amount) > 0
+    order by total_amount desc;
+end;
+$$ language plpgsql;
+
+-- Default Categories Function
+-- Creates starter categories for new users
+create or replace function create_default_categories(user_id_param uuid)
+returns void as $$
+begin
+    -- Expense categories
+    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
+    (user_id_param, 'Food', 'expense', 'restaurant', '#FF6B6B', true, 1),
+    (user_id_param, 'Transportation', 'expense', 'car', '#4ECDC4', true, 2),
+    (user_id_param, 'Shopping', 'expense', 'shopping-bag', '#45B7D1', true, 3),
+    (user_id_param, 'Bills', 'expense', 'file-text', '#96CEB4', true, 4),
+    (user_id_param, 'Entertainment', 'expense', 'film', '#D4A5A5', true, 5);
+
+    -- Income categories
+    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
+    (user_id_param, 'Salary', 'income', 'briefcase', '#4CAF50', true, 1),
+    (user_id_param, 'Freelance', 'income', 'edit', '#8BC34A', true, 2),
+    (user_id_param, 'Investments', 'income', 'trending-up', '#009688', true, 3);
+
+    -- Investment categories
+    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
+    (user_id_param, 'Stocks', 'investment', 'bar-chart', '#673AB7', true, 1),
+    (user_id_param, 'Real Estate', 'investment', 'home', '#3F51B5', true, 2),
+    (user_id_param, 'Crypto', 'investment', 'bitcoin', '#2196F3', true, 3);
+end;
+$$ language plpgsql;
+
+-- Indexes for Performance
+create index if not exists idx_transactions_user_date 
+    on transactions(user_id, date);  -- For date-based queries
+
+create index if not exists idx_transactions_type_year 
+    on transactions (
+        type,
+        user_id,
+        (extract(year from date))
+    );  -- For annual reports
+
+create index if not exists idx_transactions_category 
+    on transactions(category_id);  -- For category queries
+
+create index if not exists idx_categories_user 
+    on categories(user_id);  -- For user's categories
+
+-- Security Policies
+-- Ensure users can only access their own data
+alter table profiles enable row level security;
+alter table categories enable row level security;
+alter table transactions enable row level security;
+
+create policy "Users can view own profile"
+    on profiles for select
+    using (auth.uid() = id);
+
+create policy "Users can update own profile"
+    on profiles for update
+    using (auth.uid() = id);
+
+create policy "Users can CRUD own categories"
+    on categories for all
+    using (auth.uid() = user_id);
+
+create policy "Users can CRUD own transactions"
+    on transactions for all
+    using (auth.uid() = user_id);
+
+-- Trigger for creating default categories for new users
+create or replace function handle_new_user()
 returns trigger as $$
 begin
-    insert into public.profiles (
-        id, 
-        full_name, 
-        avatar_url, 
-        email,
-        created_at
-    )
+    -- Create profile
+    insert into public.profiles (id, full_name, avatar_url, email)
     values (
         new.id,
-        case 
-            when new.raw_user_meta_data->>'provider' = 'github' then new.raw_user_meta_data->>'name'
-            when new.raw_user_meta_data->>'provider' = 'google' then new.raw_user_meta_data->>'full_name'
-            else coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name')
-        end,
-        case 
-            when new.raw_user_meta_data->>'provider' = 'github' then new.raw_user_meta_data->>'avatar_url'
-            when new.raw_user_meta_data->>'provider' = 'google' then new.raw_user_meta_data->>'picture'
-            else coalesce(new.raw_user_meta_data->>'avatar_url', new.raw_user_meta_data->>'picture')
-        end,
-        new.email,
-        new.created_at
+        coalesce(
+            new.raw_user_meta_data->>'full_name',
+            new.raw_user_meta_data->>'name'
+        ),
+        coalesce(
+            new.raw_user_meta_data->>'avatar_url',
+            new.raw_user_meta_data->>'picture'
+        ),
+        new.email
     );
-    
-    -- Create default categories for new user
+
+    -- Create default categories
     perform create_default_categories(new.id);
-    
+
     return new;
 end;
 $$ language plpgsql security definer;
 
--- Transactions table (modified to better support the UI)
-create table public.transactions (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    category_id uuid references public.categories(id) on delete set null,
-    amount decimal(12,2) not null,
-    note text,                    -- Changed from description to note to match UI
-    date date not null default current_date,
-    type text not null check (type in ('expense', 'income', 'investment')),
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
--- Budgets table
-create table public.budgets (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    category_id uuid references public.categories(id) on delete cascade,
-    amount decimal(12,2) not null,
-    period text not null check (period in ('daily', 'weekly', 'monthly', 'yearly')),
-    start_date date not null,
-    end_date date,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
--- Bills table
-create table public.bills (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    name text not null,
-    amount decimal(12,2) not null,
-    due_date date not null,
-    frequency text not null check (frequency in ('one-time', 'weekly', 'monthly', 'yearly')),
-    auto_pay boolean default false,
-    status text default 'pending',
-    category_id uuid references public.categories(id) on delete set null,
-    reminder_days integer default 3,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
--- Investments table
-create table public.investments (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    type text not null check (type in ('stock', 'crypto', 'mutual_fund', 'real_estate', 'other')),
-    name text not null,
-    symbol text,
-    quantity decimal(15,6),
-    purchase_price decimal(15,2),
-    current_price decimal(15,2),
-    purchase_date date not null,
-    notes text,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
--- Financial Goals table
-create table public.financial_goals (
-    id uuid default uuid_generate_v4() primary key,
-    user_id uuid references public.profiles(id) on delete cascade not null,
-    name text not null,
-    target_amount decimal(12,2) not null,
-    current_amount decimal(12,2) default 0,
-    deadline date,
-    priority text check (priority in ('low', 'medium', 'high')),
-    status text default 'in_progress' check (status in ('in_progress', 'completed', 'cancelled')),
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
+-- Trigger to automatically create profile on signup
+create trigger on_auth_user_created
+    after insert on auth.users
+    for each row execute procedure public.handle_new_user();
 
 -- Helper function to get monthly summary with investments
 create or replace function get_monthly_summary(
@@ -679,211 +798,6 @@ begin
     order by m.month_num;
 end;
 $$ language plpgsql;
-
--- Create enum types for transaction types
-create type transaction_type as enum ('expense', 'income', 'investment');
-create type transaction_status as enum ('pending', 'completed', 'cancelled');
-create type recurring_period as enum ('daily', 'weekly', 'monthly', 'yearly');
-
--- Create tables
-create table if not exists profiles (
-    id uuid references auth.users on delete cascade primary key,
-    full_name text,
-    avatar_url text,
-    email text,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-create table if not exists categories (
-    id uuid primary key default uuid_generate_v4(),
-    user_id uuid references profiles(id) on delete cascade not null,
-    name text not null,
-    type transaction_type not null,
-    icon text not null,
-    color text not null,
-    display_order integer default 0,
-    is_default boolean default false,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-create table if not exists transactions (
-    id uuid primary key default uuid_generate_v4(),
-    user_id uuid references profiles(id) on delete cascade not null,
-    category_id uuid references categories(id) on delete set null,
-    type transaction_type not null,
-    amount decimal(12,2) not null check (amount >= 0),
-    date timestamp with time zone not null,
-    notes text,
-    status transaction_status default 'completed',
-    recurring_period recurring_period,
-    recurring_end_date timestamp with time zone,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
--- Functions for annual reports
-create or replace function get_annual_report(
-    user_id_param uuid,
-    year_param integer,
-    type_param transaction_type
-)
-returns table (
-    month integer,
-    month_name text,
-    amount decimal(12,2),
-    transaction_count integer
-) as $$
-begin
-    return query
-    with all_months as (
-        select generate_series(1, 12) as month_num
-    )
-    select 
-        m.month_num as month,
-        to_char(make_date(year_param, m.month_num, 1), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        count(t.id) as transaction_count
-    from all_months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_num
-        and extract(year from t.date) = year_param
-        and t.user_id = user_id_param
-        and t.type = type_param
-    group by m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Function for category annual report
-create or replace function get_category_annual_report(
-    user_id_param uuid,
-    year_param integer,
-    type_param transaction_type
-)
-returns table (
-    category_id uuid,
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2),
-    transaction_count integer
-) as $$
-declare
-    total_amount_all_categories decimal(12,2);
-begin
-    -- Calculate total amount for percentage calculation
-    select coalesce(sum(t.amount), 0.00)
-    into total_amount_all_categories
-    from transactions t
-    where t.user_id = user_id_param
-    and extract(year from t.date) = year_param
-    and t.type = type_param;
-
-    return query
-    select 
-        c.id as category_id,
-        c.name as category_name,
-        c.icon as category_icon,
-        c.color as category_color,
-        coalesce(sum(t.amount), 0.00) as total_amount,
-        case 
-            when total_amount_all_categories > 0 then 
-                round((sum(t.amount) / total_amount_all_categories * 100)::numeric, 2)
-            else 0.00 
-        end as percentage,
-        count(t.id) as transaction_count
-    from categories c
-    left join transactions t on 
-        t.category_id = c.id 
-        and extract(year from t.date) = year_param
-        and t.type = type_param
-        and t.user_id = user_id_param
-    where c.user_id = user_id_param
-    and c.type = type_param
-    group by c.id, c.name, c.icon, c.color
-    having sum(t.amount) > 0
-    order by total_amount desc;
-end;
-$$ language plpgsql;
-
--- Function to get totals by type
-create or replace function get_annual_type_totals(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    transaction_type transaction_type,
-    total_amount decimal(12,2),
-    transaction_count integer
-) as $$
-begin
-    return query
-    select 
-        t.type,
-        coalesce(sum(t.amount), 0.00) as total_amount,
-        count(*) as transaction_count
-    from transactions t
-    where t.user_id = user_id_param
-    and extract(year from t.date) = year_param
-    group by t.type
-    order by t.type;
-end;
-$$ language plpgsql;
-
--- Function to create default categories for new users
-create or replace function create_default_categories(user_id_param uuid)
-returns void as $$
-begin
-    -- Expense categories
-    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
-    (user_id_param, 'Food', 'expense', 'restaurant', '#FF6B6B', true, 1),
-    (user_id_param, 'Transportation', 'expense', 'car', '#4ECDC4', true, 2),
-    (user_id_param, 'Shopping', 'expense', 'shopping-bag', '#45B7D1', true, 3),
-    (user_id_param, 'Bills', 'expense', 'file-text', '#96CEB4', true, 4),
-    (user_id_param, 'Entertainment', 'expense', 'film', '#D4A5A5', true, 5);
-
-    -- Income categories
-    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
-    (user_id_param, 'Salary', 'income', 'briefcase', '#4CAF50', true, 1),
-    (user_id_param, 'Freelance', 'income', 'edit', '#8BC34A', true, 2),
-    (user_id_param, 'Investments', 'income', 'trending-up', '#009688', true, 3);
-
-    -- Investment categories
-    insert into categories (user_id, name, type, icon, color, is_default, display_order) values
-    (user_id_param, 'Stocks', 'investment', 'bar-chart', '#673AB7', true, 1),
-    (user_id_param, 'Real Estate', 'investment', 'home', '#3F51B5', true, 2),
-    (user_id_param, 'Crypto', 'investment', 'bitcoin', '#2196F3', true, 3);
-end;
-$$ language plpgsql;
-
--- Trigger for creating default categories for new users
-create or replace function handle_new_user()
-returns trigger as $$
-begin
-    -- Create profile
-    insert into public.profiles (id, full_name, avatar_url, email)
-    values (
-        new.id,
-        coalesce(
-            new.raw_user_meta_data->>'full_name',
-            new.raw_user_meta_data->>'name'
-        ),
-        coalesce(
-            new.raw_user_meta_data->>'avatar_url',
-            new.raw_user_meta_data->>'picture'
-        ),
-        new.email
-    );
-
-    -- Create default categories
-    perform create_default_categories(new.id);
-
-    return new;
-end;
-$$ language plpgsql security definer;
 
 -- Create indexes for better performance
 create index if not exists idx_transactions_user_date 
