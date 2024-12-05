@@ -70,9 +70,9 @@ export const api = {
         create: (data) => ApiClient.post('/categories', data),
         update: (id, data) => ApiClient.put(`/categories/${id}`, data),
         delete: (id) => ApiClient.delete(`/categories/${id}`),
-        getSummary: (year, month, type) => 
+        getSummary: (year, month, type) =>
             ApiClient.get(`/categories/summary?year=${year}&month=${month}&type=${type}`),
-        getBreakdown: (year, month, type) => 
+        getBreakdown: (year, month, type) =>
             ApiClient.get(`/categories/breakdown?year=${year}&month=${month}&type=${type}`),
     },
 
