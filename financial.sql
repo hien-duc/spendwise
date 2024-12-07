@@ -9,8 +9,10 @@ create table public.profiles (
     id uuid references auth.users on delete cascade primary key,
     name text,
     email text,
+    currency text default 'USD',
     initial_balance decimal(12,2) default 0.00
 );
+
 
 -- Categories Table: Transaction categories
 create table public.categories (
@@ -76,908 +78,428 @@ create trigger on_auth_user_created
     after insert on auth.users
     for each row execute procedure public.handle_new_user();
 
--- Get transactions by date with category UI information
-create or replace function get_transactions_by_date(
-    user_id_param uuid,
-    date_param date
+-- Get monthly calendar data with transactions and totals
+CREATE OR REPLACE FUNCTION get_monthly_calendar_data(
+    user_id_param UUID,
+    year_param INTEGER,
+    month_param INTEGER
 )
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    amount decimal(12,2),
-    type text,
-    note text
-) as $$
-begin
-    return query
-    select 
+RETURNS TABLE (
+    -- Transaction details
+    transaction_id UUID,
+    transaction_date DATE,
+    category_id UUID,
+    category_name TEXT,
+    category_icon TEXT,
+    category_color TEXT,
+    amount DECIMAL(12,2),
+    transaction_type transaction_type,
+    note TEXT,
+    -- Monthly totals
+    month_total_income DECIMAL(12,2),
+    month_total_expense DECIMAL(12,2),
+    month_total_investment DECIMAL(12,2),
+    month_net_balance DECIMAL(12,2)
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH monthly_totals AS (
+        SELECT
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0.00) as total_income,
+            COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0.00) as total_expense,
+            COALESCE(SUM(CASE WHEN type = 'investment' THEN amount ELSE 0 END), 0.00) as total_investment,
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount 
+                           WHEN type IN ('expense', 'investment') THEN -amount 
+                           ELSE 0 END), 0.00) as net_balance
+        FROM transactions
+        WHERE user_id = user_id_param
+        AND EXTRACT(year FROM date) = year_param
+        AND EXTRACT(month FROM date) = month_param
+    )
+    SELECT 
+        t.id as transaction_id,
+        t.date as transaction_date,
+        c.id as category_id,
         c.name as category_name,
         c.icon as category_icon,
         c.color as category_color,
         t.amount,
-        t.type::text,
-        t.note
-    from transactions t
-    join categories c on t.category_id = c.id
-    where t.user_id = user_id_param
-    and t.date = date_param
-    order by t.id desc;
-end;
-$$ language plpgsql;
+        t.type as transaction_type,
+        t.note,
+        mt.total_income as month_total_income,
+        mt.total_expense as month_total_expense,
+        mt.total_investment as month_total_investment,
+        mt.net_balance as month_net_balance
+    FROM transactions t
+    JOIN categories c ON t.category_id = c.id
+    CROSS JOIN monthly_totals mt
+    WHERE t.user_id = user_id_param
+    AND EXTRACT(year FROM t.date) = year_param
+    AND EXTRACT(month FROM t.date) = month_param
+    ORDER BY t.date DESC, t.id DESC;
+END;
+$$ LANGUAGE plpgsql;
 
--- Get category summary with UI information
-create or replace function get_category_summary(
-    user_id_param uuid,
-    year_param integer,
-    month_param integer,
-    type_param transaction_type
+-- Usage example:
+-- SELECT * FROM get_monthly_calendar_data('user-uuid', 2024, 1);
+
+-- Sample output:
+-- transaction_id | transaction_date | category_id | category_name | category_icon | category_color | amount  | transaction_type | note          | month_total_income | month_total_expense | month_total_investment | month_net_balance
+-- --------------+-----------------+-------------+--------------+--------------+---------------+---------+-----------------+--------------+------------------+-------------------+---------------------+------------------
+-- uuid-1        | 2024-01-15     | cat-uuid-1  | Salary       | salary       | #4CAF50       | 5000.00 | income          | Monthly pay  |          5000.00 |           2000.00 |             1000.00 |          2000.00
+-- uuid-2        | 2024-01-15     | cat-uuid-2  | Food         | restaurant   | #FF5252       |  200.00 | expense         | Lunch        |          5000.00 |           2000.00 |             1000.00 |          2000.00
+-- uuid-3        | 2024-01-14     | cat-uuid-3  | Stocks       | trending_up  | #795548       | 1000.00 | investment      | AAPL shares  |          5000.00 |           2000.00 |             1000.00 |          2000.00
+-- ...and so on
+
+-- Get monthly report data with category breakdowns and totals
+CREATE OR REPLACE FUNCTION get_monthly_report_data(
+    user_id_param UUID,
+    year_param INTEGER,
+    month_param INTEGER
 )
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
+RETURNS TABLE (
+    -- Monthly totals
+    total_income DECIMAL(12,2),
+    total_expense DECIMAL(12,2),
+    total_investment DECIMAL(12,2),
+    net_balance DECIMAL(12,2),
+    -- Category breakdown
+    category_name TEXT,
+    category_icon TEXT,
+    category_color TEXT,
+    category_type transaction_type,
+    category_amount DECIMAL(12,2),
+    category_percentage DECIMAL(5,2)
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH monthly_totals AS (
+        SELECT
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0.00) as income_total,
+            COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0.00) as expense_total,
+            COALESCE(SUM(CASE WHEN type = 'investment' THEN amount ELSE 0 END), 0.00) as investment_total,
+            COALESCE(SUM(CASE 
+                WHEN type = 'income' THEN amount 
+                WHEN type IN ('expense', 'investment') THEN -amount 
+                ELSE 0 END), 0.00) as net_balance
+        FROM transactions
+        WHERE user_id = user_id_param
+        AND EXTRACT(year FROM date) = year_param
+        AND EXTRACT(month FROM date) = month_param
+    ),
+    category_totals AS (
+        SELECT 
             c.name,
             c.icon,
             c.color,
-            coalesce(sum(t.amount), 0) as total,
-            sum(sum(t.amount)) over () as grand_total
-        from categories c
-        left join transactions t on 
-            c.id = t.category_id and
-            extract(year from t.date) = year_param and
-            extract(month from t.date) = month_param
-        where 
-            c.user_id = user_id_param and
-            c.type = type_param
-        group by c.id, c.name, c.icon, c.color
+            c.type,
+            COALESCE(SUM(t.amount), 0.00) as amount,
+            SUM(SUM(COALESCE(t.amount, 0))) OVER (PARTITION BY c.type) as type_total
+        FROM categories c
+        LEFT JOIN transactions t ON 
+            t.category_id = c.id 
+            AND t.user_id = user_id_param
+            AND EXTRACT(year FROM t.date) = year_param
+            AND EXTRACT(month FROM t.date) = month_param
+        WHERE c.user_id = user_id_param
+        GROUP BY c.id, c.name, c.icon, c.color, c.type
     )
-    select
-        name,
-        icon,
-        color,
-        total,
-        case 
-            when grand_total > 0 then 
-                round((total / grand_total * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from category_totals
-    order by total desc;
-end;
-$$ language plpgsql;
+    SELECT 
+        mt.income_total,
+        mt.expense_total,
+        mt.investment_total,
+        mt.net_balance,
+        ct.name,
+        ct.icon,
+        ct.color,
+        ct.type,
+        ct.amount,
+        CASE 
+            WHEN ct.type_total > 0 THEN ROUND((ct.amount / ct.type_total * 100)::numeric, 2)
+            ELSE 0.00
+        END as percentage
+    FROM monthly_totals mt
+    CROSS JOIN category_totals ct
+    WHERE ct.amount > 0  -- Only show categories with transactions
+    ORDER BY ct.type, ct.amount DESC;
+END;
+$$ LANGUAGE plpgsql;
 
--- Get category breakdown by type with UI information
-create or replace function get_category_breakdown_by_type(
-    user_id_param uuid,
-    year_param integer,
-    month_param integer,
-    type_param transaction_type
+-- Usage example:
+-- SELECT * FROM get_monthly_report_data('user-uuid', 2024, 12);
+
+-- Sample output:
+-- total_income | total_expense | total_investment | net_balance | category_name | category_icon | category_color | category_type | category_amount | category_percentage
+-- -------------+---------------+-----------------+-------------+--------------+--------------+---------------+--------------+----------------+-------------------
+--     5000.00  |     23535.00  |         0.00    |  -18535.00  | Food         | restaurant   | #FF5252       | expense       |       23535.00  |            100.00
+--     5000.00  |     23535.00  |         0.00    |  -18535.00  | Salary       | salary       | #4CAF50       | income        |        5000.00  |            100.00
+
+
+-- Get category trend data for detail view
+CREATE OR REPLACE FUNCTION get_category_trend_detail(
+    user_id_param UUID,
+    year_param INTEGER,
+    category_id_param UUID
 )
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-declare
-    grand_total decimal(12,2);
-begin
-    -- Calculate grand total for the month
-    select coalesce(sum(amount), 0) into grand_total
-    from transactions t
-    join categories c on t.category_id = c.id
-    where 
-        t.user_id = user_id_param and
-        extract(year from t.date) = year_param and
-        extract(month from t.date) = month_param and
-        c.type = type_param;
-
-    return query
-    select
-        c.name as category_name,
-        c.icon as category_icon,
-        c.color as category_color,
-        coalesce(sum(t.amount), 0) as total_amount,
-        case 
-            when grand_total > 0 then 
-                round((coalesce(sum(t.amount), 0) / grand_total * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from categories c
-    left join transactions t on 
-        c.id = t.category_id and
-        extract(year from t.date) = year_param and
-        extract(month from t.date) = month_param
-    where 
-        c.user_id = user_id_param and
-        c.type = type_param
-    group by c.id, c.name, c.icon, c.color
-    order by total_amount desc;
-end;
-$$ language plpgsql;
-
--- Get monthly balance details
--- use in calendar
-create or replace function get_monthly_balance_by_month_year(
-    user_id_param uuid,
-    year_param integer,
-    month_param integer
-)
-returns table (
-    total_income decimal(12,2),
-    total_expense decimal(12,2),
-    total_investment decimal(12,2),
-    net_balance decimal(12,2)
-) as $$
-begin
-    return query
-    with monthly_totals as (
-        select
-            coalesce(sum(case when type = 'income' then amount else 0 end), 0.00) as income,
-            coalesce(sum(case when type = 'expense' then amount else 0 end), 0.00) as expense,
-            coalesce(sum(case when type = 'investment' then amount else 0 end), 0.00) as investment
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and extract(month from date) = month_param
+RETURNS TABLE (
+    month INTEGER,
+    month_name TEXT,
+    amount DECIMAL(12,2),
+    category_name TEXT,
+    category_icon TEXT,
+    category_color TEXT,
+    category_type transaction_type,
+    date_label TEXT,  -- For displaying dates like "12.7 2024 (Sat)"
+    latest_transaction_date DATE
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH months AS (
+        SELECT generate_series(1, 12) as month_number
+    ),
+    category_info AS (
+        SELECT 
+            name,
+            icon,
+            color,
+            type
+        FROM categories
+        WHERE id = category_id_param
+        AND user_id = user_id_param
+    ),
+    latest_date AS (
+        SELECT MAX(date) as last_date
+        FROM transactions
+        WHERE category_id = category_id_param
+        AND user_id = user_id_param
+        AND EXTRACT(year FROM date) = year_param
     )
-    select
-        income as total_income,
-        expense as total_expense,
-        investment as total_investment,
-        (income - expense - investment) as net_balance
-    from monthly_totals;
-end;
-$$ language plpgsql;
+    SELECT 
+        m.month_number as month,
+        to_char(to_date(m.month_number::text, 'MM'), 'Month') as month_name,
+        COALESCE(SUM(t.amount), 0.00) as amount,
+        ci.name as category_name,
+        ci.icon as category_icon,
+        ci.color as category_color,
+        ci.type as category_type,
+        CASE 
+            WHEN m.month_number = EXTRACT(month FROM ld.last_date)
+            THEN to_char(ld.last_date, 'DD.MM YYYY (Dy)')
+            ELSE ''
+        END as date_label,
+        ld.last_date as latest_transaction_date
+    FROM months m
+    CROSS JOIN category_info ci
+    CROSS JOIN latest_date ld
+    LEFT JOIN transactions t ON 
+        EXTRACT(month FROM t.date) = m.month_number
+        AND EXTRACT(year FROM t.date) = year_param
+        AND t.category_id = category_id_param
+        AND t.user_id = user_id_param
+    WHERE m.month_number <= EXTRACT(month FROM CURRENT_DATE)
+        OR year_param < EXTRACT(year FROM CURRENT_DATE)
+    GROUP BY 
+        m.month_number,
+        ci.name,
+        ci.icon,
+        ci.color,
+        ci.type,
+        ld.last_date
+    ORDER BY m.month_number;
+END;
+$$ LANGUAGE plpgsql;
 
--- Get total monthly income
-create or replace function get_monthly_income_total(
-    user_id_param uuid,
-    month_param integer,
-    year_param integer
-)
-returns decimal(12,2) as $$
-declare
-    total_income decimal(12,2);
-begin
-    select coalesce(sum(amount), 0)
-    into total_income
-    from transactions
-    where 
-        user_id = user_id_param
-        and type = 'income'
-        and extract(month from date) = month_param
-        and extract(year from date) = year_param;
-    
-    return total_income;
-end;
-$$ language plpgsql;
+-- Usage example:
+-- SELECT * FROM get_category_trend_detail('user-uuid', 2024, 'category-uuid');
 
--- Get total monthly expense
-create or replace function get_monthly_expense_total(
-    user_id_param uuid,
-    month_param integer,
-    year_param integer
-)
-returns decimal(12,2) as $$
-declare
-    total_expense decimal(12,2);
-begin
-    select coalesce(sum(amount), 0)
-    into total_expense
-    from transactions
-    where 
-        user_id = user_id_param
-        and type = 'expense'
-        and extract(month from date) = month_param
-        and extract(year from date) = year_param;
-    
-    return total_expense;
-end;
-$$ language plpgsql;
-
--- Get total monthly investment
-create or replace function get_monthly_investment_total(
-    user_id_param uuid,
-    month_param integer,
-    year_param integer
-)
-returns decimal(12,2) as $$
-declare
-    total_investment decimal(12,2);
-begin
-    select coalesce(sum(amount), 0)
-    into total_investment
-    from transactions
-    where 
-        user_id = user_id_param
-        and type = 'investment'
-        and extract(month from date) = month_param
-        and extract(year from date) = year_param;
-    
-    return total_investment;
-end;
-$$ language plpgsql;
-
--- Calculate monthly net balance (income - expense - investment)
-create or replace function get_monthly_net_balance(
-    user_id_param uuid,
-    month_param integer,
-    year_param integer
-)
-returns decimal(12,2) as $$
-declare
-    income decimal(12,2);
-    expense decimal(12,2);
-    investment decimal(12,2);
-begin
-    income := get_monthly_income_total(user_id_param, month_param, year_param);
-    expense := get_monthly_expense_total(user_id_param, month_param, year_param);
-    investment := get_monthly_investment_total(user_id_param, month_param, year_param);
-    
-    return income - expense - investment;
-end;
-$$ language plpgsql;
-
--- Get category-wise breakdown with percentages for a specific transaction type and period
+-- Sample output for Food category:
+-- month | month_name | amount  | category_name | category_icon | category_color | category_type | date_label        | latest_transaction_date
+-- ------+------------+---------+--------------+--------------+---------------+--------------+------------------+----------------------
+--     7 | July      |    0.00 | Food         | restaurant   | #FF5252       | expense      |                  | 2024-12-07
+--     8 | August    |    0.00 | Food         | restaurant   | #FF5252       | expense      |                  | 2024-12-07
+--     9 | September |    0.00 | Food         | restaurant   | #FF5252       | expense      |                  | 2024-12-07
+--    10 | October   |    0.00 | Food         | restaurant   | #FF5252       | expense      |                  | 2024-12-07
+--    11 | November  | 70000.00| Food         | restaurant   | #FF5252       | expense      |                  | 2024-12-07
+--    12 | December  | 23535.00| Food         | restaurant   | #FF5252       | expense      | 12.7 2024 (Sat)  | 2024-12-07
 
 
--- Get category breakdown by type with UI information
--- note this function
-create or replace function get_category_breakdown_by_type(
-    user_id_param uuid,
-    year_param integer,
-    month_param integer,
-    type_param transaction_type
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-declare
-    grand_total decimal(12,2);
-begin
-    -- Calculate grand total for the month
-    select coalesce(sum(amount), 0) into grand_total
-    from transactions t
-    join categories c on t.category_id = c.id
-    where 
-        t.user_id = user_id_param and
-        extract(year from t.date) = year_param and
-        extract(month from t.date) = month_param and
-        c.type = type_param;
-
-    return query
-    select
-        c.name as category_name,
-        c.icon as category_icon,
-        c.color as category_color,
-        coalesce(sum(t.amount), 0) as total_amount,
-        case 
-            when grand_total > 0 then 
-                round((coalesce(sum(t.amount), 0) / grand_total * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from categories c
-    left join transactions t on 
-        c.id = t.category_id and
-        extract(year from t.date) = year_param and
-        extract(month from t.date) = month_param
-    where 
-        c.user_id = user_id_param and
-        c.type = type_param
-    group by c.id, c.name, c.icon, c.color
-    order by total_amount desc;
-end;
-$$ language plpgsql;
-
--- get_category_breakdown_by_type will show:
---Food         | 500.00 | 60.00   (includes categories with zero amounts)
---Transport    | 200.00 | 24.00
---Bills        | 133.33 | 16.00
---Entertainment|   0.00 |  0.00   <- Shows this
-
--- get_category_summary will show:
---Food         | 500.00 | 60.00   (only shows categories with amounts > 0)
---Transport    | 200.00 | 24.00
---Bills        | 133.33 | 16.00
-
-
--- Get monthly income totals for the year
-create or replace function get_monthly_income_trend(
+-- Get annual income report with monthly breakdown and total
+create or replace function get_annual_transactions_report(
     user_id_param uuid,
     year_param integer
 )
 returns table (
-    month integer,
+    month_number integer,
     month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_to_date_total decimal(12,2)
+    income_amount decimal(12,2),
+    expense_amount decimal(12,2),
+    investment_amount decimal(12,2),
+    running_income_total decimal(12,2),
+    running_expense_total decimal(12,2),
+    running_investment_total decimal(12,2),
+    year_to_date_income_total decimal(12,2),
+    year_to_date_expense_total decimal(12,2),
+    year_to_date_investment_total decimal(12,2)
 ) as $$
 begin
     return query
     with months as (
-        select generate_series(1, 12) as month_number
+        select generate_series(1, 12) as month_num
     ),
-    year_to_date as (
-        select coalesce(sum(amount), 0.00) as total
+    monthly_data as (
+        select 
+            extract(month from date)::integer as month_num,
+            sum(case when type = 'income' then amount else 0 end) as income,
+            sum(case when type = 'expense' then amount else 0 end) as expense,
+            sum(case when type = 'investment' then amount else 0 end) as investment
         from transactions
         where user_id = user_id_param
         and extract(year from date) = year_param
-        and type = 'income'
-    )
-    select 
-        m.month_number as month,
-        to_char(to_date(m.month_number::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_number) as running_total,
-        (select total from year_to_date) as year_to_date_total
-    from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_number
-        and extract(year from t.date) = year_param
-        and t.type = 'income'
-        and t.user_id = user_id_param
-    where m.month_number <= extract(month from current_date)
-        or year_param < extract(year from current_date)
-    group by m.month_number
-    order by m.month_number;
-end;
-$$ language plpgsql;
-
--- Get monthly expense totals for the year
-create or replace function get_monthly_expense_trend(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    month integer,
-    month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_to_date_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_number
+        group by extract(month from date)
     ),
     year_to_date as (
-        select coalesce(sum(amount), 0.00) as total
+        select 
+            coalesce(sum(case when type = 'income' then amount else 0 end), 0.00) as income_total,
+            coalesce(sum(case when type = 'expense' then amount else 0 end), 0.00) as expense_total,
+            coalesce(sum(case when type = 'investment' then amount else 0 end), 0.00) as investment_total
         from transactions
         where user_id = user_id_param
         and extract(year from date) = year_param
-        and type = 'expense'
     )
     select 
-        m.month_number as month,
-        to_char(to_date(m.month_number::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_number) as running_total,
-        (select total from year_to_date) as year_to_date_total
+        m.month_num as month_number,
+        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
+        coalesce(md.income, 0.00) as income_amount,
+        coalesce(md.expense, 0.00) as expense_amount,
+        coalesce(md.investment, 0.00) as investment_amount,
+        sum(coalesce(md.income, 0.00)) over (order by m.month_num) as running_income_total,
+        sum(coalesce(md.expense, 0.00)) over (order by m.month_num) as running_expense_total,
+        sum(coalesce(md.investment, 0.00)) over (order by m.month_num) as running_investment_total,
+        (select income_total from year_to_date) as year_to_date_income_total,
+        (select expense_total from year_to_date) as year_to_date_expense_total,
+        (select investment_total from year_to_date) as year_to_date_investment_total
     from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_number
-        and extract(year from t.date) = year_param
-        and t.type = 'expense'
-        and t.user_id = user_id_param
-    where m.month_number <= extract(month from current_date)
+    left join monthly_data md on md.month_num = m.month_num
+    where m.month_num <= extract(month from current_date)
         or year_param < extract(year from current_date)
-    group by m.month_number
-    order by m.month_number;
-end;
-$$ language plpgsql;
-
--- Get monthly investment totals for the year
-create or replace function get_monthly_investment_trend(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    month integer,
-    month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_to_date_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_number
-    ),
-    year_to_date as (
-        select coalesce(sum(amount), 0.00) as total
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'investment'
-    )
-    select 
-        m.month_number as month,
-        to_char(to_date(m.month_number::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_number) as running_total,
-        (select total from year_to_date) as year_to_date_total
-    from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_number
-        and extract(year from t.date) = year_param
-        and t.type = 'investment'
-        and t.user_id = user_id_param
-    where m.month_number <= extract(month from current_date)
-        or year_param < extract(year from current_date)
-    group by m.month_number
-    order by m.month_number;
+    order by m.month_num;
 end;
 $$ language plpgsql;
 
 -- Usage example:
-
--- Get income trend for 2024
---SELECT * FROM get_monthly_income_trend('your-user-id', 2024);
-
--- Get expense trend for 2024
--- SELECT * FROM get_monthly_expense_trend('your-user-id', 2024);
-
--- Get investment trend for 2024
--- SELECT * FROM get_monthly_investment_trend('your-user-id', 2024);
+-- SELECT * FROM get_annual_transactions_report('your-user-id', 2024);
 
 -- Sample output:
--- month | month_name | amount | running_total | year_to_date_total
--- ------+------------+--------+---------------+-------------------
---     1 | January    | 500.00 |       500.00 |           2400.00
---     2 | February   | 300.00 |       800.00 |           2400.00
---     3 | March      | 400.00 |      1200.00 |           2400.00
---     4 | April      | 300.00 |      1500.00 |           2400.00
---     5 | May        | 900.00 |      2400.00 |           2400.00
---    ... (only shows up to current month)
-
--- Features:
-
--- Shows all months up to current month
--- Includes months with zero amounts
--- Properly formatted month names
--- Ordered by month number
--- For bar charts in the detail report page
-
--- Get annual income report with monthly breakdown and total
-create or replace function get_annual_income_report(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    month_number integer,
-    month_name text,
-    monthly_amount decimal(12,2),
-    running_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    monthly_data as (
-        select 
-            extract(month from date)::integer as month_num,
-            coalesce(sum(amount), 0.00) as amount
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'income'
-        group by extract(month from date)
-    )
-    select 
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(md.amount, 0.00) as monthly_amount,
-        sum(coalesce(md.amount, 0.00)) over (order by m.month_num) as running_total
-    from months m
-    left join monthly_data md on md.month_num = m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Get annual expense report with monthly breakdown and total
-create or replace function get_annual_expense_report(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    month_number integer,
-    month_name text,
-    monthly_amount decimal(12,2),
-    running_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    monthly_data as (
-        select 
-            extract(month from date)::integer as month_num,
-            coalesce(sum(amount), 0.00) as amount
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'expense'
-        group by extract(month from date)
-    )
-    select 
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(md.amount, 0.00) as monthly_amount,
-        sum(coalesce(md.amount, 0.00)) over (order by m.month_num) as running_total
-    from months m
-    left join monthly_data md on md.month_num = m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Get annual investment report with monthly breakdown and total
-create or replace function get_annual_investment_report(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    month_number integer,
-    month_name text,
-    monthly_amount decimal(12,2),
-    running_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    monthly_data as (
-        select 
-            extract(month from date)::integer as month_num,
-            coalesce(sum(amount), 0.00) as amount
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'investment'
-        group by extract(month from date)
-    )
-    select 
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(md.amount, 0.00) as monthly_amount,
-        sum(coalesce(md.amount, 0.00)) over (order by m.month_num) as running_total
-    from months m
-    left join monthly_data md on md.month_num = m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Usage examples:
--- SELECT * FROM get_annual_income_report('your-user-id', 2024);
--- SELECT * FROM get_annual_expense_report('your-user-id', 2024);
--- SELECT * FROM get_annual_investment_report('your-user-id', 2024);
-
--- Sample output:
--- month_number | month_name | monthly_amount | running_total
--- -------------+------------+----------------+---------------
---           1 | January    |         500.00 |        500.00
---           2 | February   |         300.00 |        800.00
---           3 | March      |         400.00 |       1200.00
---           4 | April      |           0.00 |       1200.00
+-- month_number | month_name | income_amount | expense_amount | investment_amount | running_income_total | running_expense_total | running_investment_total | year_to_date_income_total | year_to_date_expense_total | year_to_date_investment_total
+-- -------------+------------+--------------+----------------+-------------------+---------------------+-----------------------+-------------------------+---------------------------+---------------------------+-------------------------------
+--           1 | January    |      5000.00 |        2000.00 |          1000.00 |             5000.00 |              2000.00 |               1000.00 |                  60000.00 |                  24000.00 |                   12000.00
+--           2 | February   |      5000.00 |        2000.00 |          1000.00 |            10000.00 |              4000.00 |               2000.00 |                  60000.00 |                  24000.00 |                   12000.00
+--           3 | March      |      5000.00 |        2000.00 |          1000.00 |            15000.00 |              6000.00 |               3000.00 |                  60000.00 |                  24000.00 |                   12000.00
+--           4 | April      |      5000.00 |        2000.00 |          1000.00 |            20000.00 |              8000.00 |               4000.00 |                  60000.00 |                  24000.00 |                   12000.00
 --          ...and so on
 
--- Get annual income by categories report
-create or replace function get_annual_income_by_categories(
-    user_id_param uuid,
-    year_param integer
+-- Get annual transaction trends with total (combined function)
+-- anual report
+CREATE OR REPLACE FUNCTION get_annual_transactions_trend(
+    user_id_param UUID,
+    year_param INTEGER
 )
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and extract(year from t.date) = year_param
-            and t.user_id = user_id_param
-            and t.type = 'income'
-        where c.user_id = user_id_param
-        and c.type = 'income'
-        group by c.id, c.name, c.icon, c.color
+RETURNS TABLE (
+    year_number INTEGER,
+    month_number INTEGER,
+    month_name TEXT,
+    income_amount DECIMAL(12,2),
+    income_running_total DECIMAL(12,2),
+    income_year_total DECIMAL(12,2),
+    expense_amount DECIMAL(12,2),
+    expense_running_total DECIMAL(12,2),
+    expense_year_total DECIMAL(12,2),
+    investment_amount DECIMAL(12,2),
+    investment_running_total DECIMAL(12,2),
+    investment_year_total DECIMAL(12,2)
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH months AS (
+        SELECT generate_series(1, 12) AS month_num
     ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
-    )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from category_totals
-    order by amount desc;
-end;
-$$ language plpgsql;
-
--- Get annual expense by categories report
-create or replace function get_annual_expense_by_categories(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and extract(year from t.date) = year_param
-            and t.user_id = user_id_param
-            and t.type = 'expense'
-        where c.user_id = user_id_param
-        and c.type = 'expense'
-        group by c.id, c.name, c.icon, c.color
+    yearly_totals AS (
+        SELECT 
+            type,
+            COALESCE(SUM(amount), 0.00) AS total
+        FROM transactions
+        WHERE user_id = user_id_param
+        AND EXTRACT(year FROM date) = year_param
+        GROUP BY type
     ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
-    )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from category_totals
-    order by amount desc;
-end;
-$$ language plpgsql;
-
--- Get annual investment by categories report
-create or replace function get_annual_investment_by_categories(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and extract(year from t.date) = year_param
-            and t.user_id = user_id_param
-            and t.type = 'investment'
-        where c.user_id = user_id_param
-        and c.type = 'investment'
-        group by c.id, c.name, c.icon, c.color
+    monthly_amounts AS (
+        SELECT 
+            EXTRACT(month FROM t.date)::integer AS month_num,
+            t.type,
+            COALESCE(SUM(t.amount), 0.00) AS amount
+        FROM transactions t
+        WHERE t.user_id = user_id_param
+        AND EXTRACT(year FROM t.date) = year_param
+        GROUP BY EXTRACT(month FROM t.date), t.type
     ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
+    running_totals AS (
+        SELECT 
+            m.month_num,
+            to_char(to_date(m.month_num::text, 'MM'), 'Month') AS month_name,
+            -- Income
+            COALESCE(MAX(CASE WHEN ma.type = 'income' THEN ma.amount ELSE 0 END), 0.00) AS income_amount,
+            SUM(COALESCE(CASE WHEN ma.type = 'income' THEN ma.amount ELSE 0 END, 0.00)) 
+                OVER (ORDER BY m.month_num) AS income_running_total,
+            COALESCE(MAX(CASE WHEN yt.type = 'income' THEN yt.total ELSE 0 END), 0.00) AS income_year_total,
+            -- Expense
+            COALESCE(MAX(CASE WHEN ma.type = 'expense' THEN ma.amount ELSE 0 END), 0.00) AS expense_amount,
+            SUM(COALESCE(CASE WHEN ma.type = 'expense' THEN ma.amount ELSE 0 END, 0.00)) 
+                OVER (ORDER BY m.month_num) AS expense_running_total,
+            COALESCE(MAX(CASE WHEN yt.type = 'expense' THEN yt.total ELSE 0 END), 0.00) AS expense_year_total,
+            -- Investment
+            COALESCE(MAX(CASE WHEN ma.type = 'investment' THEN ma.amount ELSE 0 END), 0.00) AS investment_amount,
+            SUM(COALESCE(CASE WHEN ma.type = 'investment' THEN ma.amount ELSE 0 END, 0.00)) 
+                OVER (ORDER BY m.month_num) AS investment_running_total,
+            COALESCE(MAX(CASE WHEN yt.type = 'investment' THEN yt.total ELSE 0 END), 0.00) AS investment_year_total
+        FROM months m
+        LEFT JOIN monthly_amounts ma ON ma.month_num = m.month_num
+        CROSS JOIN yearly_totals yt
+        GROUP BY m.month_num
     )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00
-        end as percentage
-    from category_totals
-    order by amount desc;
-end;
-$$ language plpgsql;
+    SELECT 
+        year_param AS year_number,
+        month_num AS month_number,
+        month_name,
+        income_amount,
+        income_running_total,
+        income_year_total,
+        expense_amount,
+        expense_running_total,
+        expense_year_total,
+        investment_amount,
+        investment_running_total,
+        investment_year_total
+    FROM running_totals
+    ORDER BY month_number;
+END;
+$$ LANGUAGE plpgsql;
 
--- Usage examples:
--- SELECT * FROM get_annual_income_by_categories('your-user-id', 2024);
--- SELECT * FROM get_annual_expense_by_categories('your-user-id', 2024);
--- SELECT * FROM get_annual_investment_by_categories('your-user-id', 2024);
-
+-- Usage example for the combined annual trends function
+-- Usage:
+-- SELECT * FROM get_annual_transactions_trend('user-uuid', 2024);
 -- Sample output:
--- category_name | total_amount | percentage
--- -------------+--------------+------------
--- Salary       |     50000.00 |     75.00
--- Freelance    |     15000.00 |     22.50
--- Other        |      1666.67 |      2.50
+-- year_number | month_number | month_name | income_amount | income_running_total | income_year_total | expense_amount | expense_running_total | expense_year_total | investment_amount | investment_running_total | investment_year_total
+-- ------------+--------------+------------+--------------+--------------------+------------------+----------------+---------------------+-------------------+------------------+-----------------------+---------------------
+--       2024 |            1 | January    |      5000.00 |            5000.00 |         60000.00 |        2000.00 |             2000.00 |          24000.00 |          1000.00 |               1000.00 |            12000.00
+--       2024 |            2 | February   |      5000.00 |           10000.00 |         60000.00 |        2000.00 |             4000.00 |          24000.00 |          1000.00 |               2000.00 |            12000.00
+--       2024 |            3 | March      |      5000.00 |           15000.00 |         60000.00 |        2000.00 |             6000.00 |          24000.00 |          1000.00 |               3000.00 |            12000.00
+--       2024 |            4 | April      |      5000.00 |           20000.00 |         60000.00 |        2000.00 |             8000.00 |          24000.00 |          1000.00 |               4000.00 |            12000.00
+--       ...and so on
 
--- Get annual income trend with total
-create or replace function get_annual_income_trend(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    year_number integer,
-    month_number integer,
-    month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    yearly_total as (
-        select coalesce(sum(amount), 0.00) as total
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'income'
-    )
-    select 
-        year_param as year_number,
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_num) as running_total,
-        (select total from yearly_total) as year_total
-    from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_num
-        and extract(year from t.date) = year_param
-        and t.type = 'income'
-        and t.user_id = user_id_param
-    group by m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
 
--- Get annual expense trend with total
-create or replace function get_annual_expense_trend(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    year_number integer,
-    month_number integer,
-    month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    yearly_total as (
-        select coalesce(sum(amount), 0.00) as total
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'expense'
-    )
-    select 
-        year_param as year_number,
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_num) as running_total,
-        (select total from yearly_total) as year_total
-    from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_num
-        and extract(year from t.date) = year_param
-        and t.type = 'expense'
-        and t.user_id = user_id_param
-    group by m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Get annual investment trend with total
-create or replace function get_annual_investment_trend(
-    user_id_param uuid,
-    year_param integer
-)
-returns table (
-    year_number integer,
-    month_number integer,
-    month_name text,
-    amount decimal(12,2),
-    running_total decimal(12,2),
-    year_total decimal(12,2)
-) as $$
-begin
-    return query
-    with months as (
-        select generate_series(1, 12) as month_num
-    ),
-    yearly_total as (
-        select coalesce(sum(amount), 0.00) as total
-        from transactions
-        where user_id = user_id_param
-        and extract(year from date) = year_param
-        and type = 'investment'
-    )
-    select 
-        year_param as year_number,
-        m.month_num as month_number,
-        to_char(to_date(m.month_num::text, 'MM'), 'Month') as month_name,
-        coalesce(sum(t.amount), 0.00) as amount,
-        sum(coalesce(sum(t.amount), 0.00)) over (order by m.month_num) as running_total,
-        (select total from yearly_total) as year_total
-    from months m
-    left join transactions t on 
-        extract(month from t.date) = m.month_num
-        and extract(year from t.date) = year_param
-        and t.type = 'investment'
-        and t.user_id = user_id_param
-    group by m.month_num
-    order by m.month_num;
-end;
-$$ language plpgsql;
-
--- Usage examples:
--- SELECT * FROM get_annual_income_trend('your-user-id', 2024);
--- SELECT * FROM get_annual_expense_trend('your-user-id', 2024);
--- SELECT * FROM get_annual_investment_trend('your-user-id', 2024);
-
--- Sample output:
--- year_number | month_number | month_name | amount | running_total | year_total
--- ------------+--------------+------------+--------+---------------+------------
---       2024 |            1 | January    | 500.00 |       500.00 |   6000.00
---       2024 |            2 | February   | 300.00 |       800.00 |   6000.00
---       2024 |            3 | March      | 400.00 |      1200.00 |   6000.00
---       2024 |            4 | April      |   0.00 |      1200.00 |   6000.00
---      ...and so on
 
 -- Get all-time financial report with initial balance
+-- all time report
 create or replace function get_all_time_balance_report(
     user_id_param uuid
 )
@@ -1042,161 +564,11 @@ $$ language plpgsql;
 -- 2024 |     3 | March      |       800.00 |        400.00 |          100.00 |     300.00 |         1000.00 |           2100.00
 
 
--- Get all-time income by categories report
-create or replace function get_all_time_income_by_categories(
-    user_id_param uuid
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and t.user_id = user_id_param
-        where c.user_id = user_id_param
-        and c.type = 'income'
-        group by c.id, c.name, c.icon, c.color
-    ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
-    )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00 
-        end as percentage
-    from category_totals
-    where amount > 0
-    order by amount desc;
-end;
-$$ language plpgsql;
-
--- Get all-time expenses by categories report
-create or replace function get_all_time_expense_by_categories(
-    user_id_param uuid
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and t.user_id = user_id_param
-        where c.user_id = user_id_param
-        and c.type = 'expense'
-        group by c.id, c.name, c.icon, c.color
-    ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
-    )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00 
-        end as percentage
-    from category_totals
-    where amount > 0
-    order by amount desc;
-end;
-$$ language plpgsql;
-
--- Get all-time investments by categories report
-create or replace function get_all_time_investment_by_categories(
-    user_id_param uuid
-)
-returns table (
-    category_name text,
-    category_icon text,
-    category_color text,
-    total_amount decimal(12,2),
-    percentage decimal(5,2)
-) as $$
-begin
-    return query
-    with category_totals as (
-        select 
-            c.name,
-            c.icon,
-            c.color,
-            coalesce(sum(t.amount), 0.00) as amount
-        from categories c
-        left join transactions t on 
-            t.category_id = c.id
-            and t.user_id = user_id_param
-        where c.user_id = user_id_param
-        and c.type = 'investment'
-        group by c.id, c.name, c.icon, c.color
-    ),
-    total as (
-        select sum(amount) as total_amount from category_totals where amount > 0
-    )
-    select 
-        name as category_name,
-        icon as category_icon,
-        color as category_color,
-        amount as total_amount,
-        case 
-            when (select total_amount from total) > 0 
-            then round((amount / (select total_amount from total) * 100)::numeric, 2)
-            else 0.00 
-        end as percentage
-    from category_totals
-    where amount > 0
-    order by amount desc;
-end;
-$$ language plpgsql;
-
--- Usage examples:
--- SELECT * FROM get_all_time_income_by_categories('your-user-id');
--- SELECT * FROM get_all_time_expense_by_categories('your-user-id');
--- SELECT * FROM get_all_time_investment_by_categories('your-user-id');
-
--- Sample output:
--- category_name | total_amount | percentage
--- -------------+--------------+------------
--- Salary       |    120000.00 |     75.00
--- Freelance    |     30000.00 |     18.75
--- Dividends    |     10000.00 |      6.25
-
--- Combined annual category analysis function
--- Checked
-CREATE OR REPLACE FUNCTION get_annual_categories_summary(
-    user_id UUID,
-    year INTEGER
+-- Get all-time transactions by categories report
+-- Combined all-time category analysis function
+-- all time category report
+CREATE OR REPLACE FUNCTION get_all_time_categories_summary(
+    user_id UUID
 )
 RETURNS TABLE (
     category_name TEXT,
@@ -1218,8 +590,7 @@ BEGIN
         FROM categories c
         LEFT JOIN transactions t ON 
             t.category_id = c.id AND
-            t.user_id = user_id AND
-            EXTRACT(YEAR FROM t.date) = year
+            t.user_id = user_id
         WHERE c.user_id = user_id
         GROUP BY c.id, c.name, c.icon, c.color, c.type
     ),
@@ -1246,52 +617,151 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add usage example for the new combined function
+-- Usage example for the combined all-time function
+-- Usage:
+-- SELECT * FROM get_all_time_categories_summary('user-uuid');
+-- Sample output:
+-- category_name | category_icon | category_color | total_amount | percentage | transaction_type
+-- -------------+--------------+---------------+--------------+------------+-----------------
+-- Salary       | salary       | #4CAF50       |    150000.00 |      75.00 | income
+-- Freelance    | work         | #8BC34A       |     30000.00 |      15.00 | income
+-- Bonus        | star         | #CDDC39       |     20000.00 |      10.00 | income
+-- Food         | fastfood     | #FF5252       |     24000.00 |      40.00 | expense
+-- Transport    | car          | #448AFF       |     18000.00 |      30.00 | expense
+-- Bills        | payments     | #FF9800       |     12000.00 |      20.00 | expense
+-- Shopping     | cart         | #E91E63       |      6000.00 |      10.00 | expense
+-- Stocks       | trending_up  | #795548       |     45000.00 |      60.00 | investment
+-- Real Estate  | home         | #607D8B       |     22500.00 |      30.00 | investment
+-- Crypto       | currency     | #9E9E9E       |      7500.00 |      10.00 | investment
+
+-- Get annual transactions by categories report (combined function)
+-- category annual  report
+CREATE OR REPLACE FUNCTION get_annual_categories_summary(
+    user_id_param UUID,
+    year_param INTEGER
+)
+RETURNS TABLE (
+    category_name TEXT,
+    category_icon TEXT,
+    category_color TEXT,
+    total_amount DECIMAL(12,2),
+    percentage DECIMAL(5,2),
+    transaction_type transaction_type
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH category_totals AS (
+        SELECT 
+            c.name,
+            c.icon,
+            c.color,
+            COALESCE(SUM(t.amount), 0) as total,
+            c.type as trans_type
+        FROM categories c
+        LEFT JOIN transactions t ON 
+            t.category_id = c.id AND
+            t.user_id = user_id_param AND
+            EXTRACT(YEAR FROM t.date) = year_param
+        WHERE c.user_id = user_id_param
+        GROUP BY c.id, c.name, c.icon, c.color, c.type
+    ),
+    type_totals AS (
+        SELECT 
+            trans_type,
+            SUM(total) as type_total
+        FROM category_totals
+        GROUP BY trans_type
+    )
+    SELECT 
+        ct.name,
+        ct.icon,
+        ct.color,
+        ct.total,
+        CASE 
+            WHEN tt.type_total = 0 THEN 0
+            ELSE ROUND((ct.total / tt.type_total * 100)::numeric, 2)
+        END,
+        ct.trans_type
+    FROM category_totals ct
+    JOIN type_totals tt ON ct.trans_type = tt.trans_type
+    ORDER BY ct.trans_type, ct.total DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Usage example for the combined annual categories function
 -- Usage:
 -- SELECT * FROM get_annual_categories_summary('user-uuid', 2024);
 -- Sample output:
 -- category_name | category_icon | category_color | total_amount | percentage | transaction_type
 -- -------------+--------------+---------------+--------------+------------+-----------------
--- Salary       | salary       | #4CAF50       |     50000.00 |      83.33 | income
+-- Salary       | salary       | #4CAF50       |     50000.00 |      75.00 | income
 -- Freelance    | work         | #8BC34A       |      8000.00 |      13.33 | income
--- Bonus        | star         | #CDDC39       |      2000.00 |       3.33 | income
--- Food         | fastfood     | #FF5252       |      6000.00 |      40.00 | expense
--- Transport    | car          | #448AFF       |      4500.00 |      30.00 | expense
--- Bills        | payments     | #FF9800       |      3000.00 |      20.00 | expense
--- Shopping     | cart         | #E91E63       |      1500.00 |      10.00 | expense
--- Stocks       | trending_up  | #795548       |     15000.00 |      60.00 | investment
--- Real Estate  | home         | #607D8B       |      7500.00 |      30.00 | investment
--- Crypto       | currency     | #9E9E9E       |      2500.00 |      10.00 | investment
+-- Other        | more         | #CDDC39       |      1666.67 |       2.50 | income
+-- Food         | fastfood     | #FF5252       |     24000.00 |      40.00 | expense
+-- Transport    | car          | #448AFF       |     18000.00 |      30.00 | expense
+-- Bills        | payments     | #FF9800       |     12000.00 |      20.00 | expense
+-- Shopping     | cart         | #E91E63       |      6000.00 |      10.00 | expense
+-- Stocks       | trending_up  | #795548       |     30000.00 |      60.00 | investment
+-- Real Estate  | home         | #607D8B       |     15000.00 |      30.00 | investment
+-- Crypto       | currency     | #9E9E9E       |      5000.00 |      10.00 | investment
 
 -- Enable Row Level Security (RLS)
-alter table profiles enable row level security;
-alter table categories enable row level security;
-alter table transactions enable row level security;
+alter table public.profiles enable row level security;
+alter table public.categories enable row level security;
+alter table public.transactions enable row level security;
 
--- Create RLS policies
-create policy "Users can view own profile"
-    on profiles for select
-    using (auth.uid() = id);
+-- Policies for profiles table
+create policy "Profiles are viewable by owner"
+    on public.profiles for select
+    using ( auth.uid() = id );
 
-create policy "Users can update own profile"
-    on profiles for update
-    using (auth.uid() = id);
+create policy "Profiles are insertable by owner"
+    on public.profiles for insert
+    with check ( auth.uid() = id );
 
-create policy "Users can view own categories"
-    on categories for select
-    using (auth.uid() = user_id);
+create policy "Profiles are updatable by owner"
+    on public.profiles for update
+    using ( auth.uid() = id );
 
-create policy "Users can manage own categories"
-    on categories for all
-    using (auth.uid() = user_id);
+-- Policies for categories table
+create policy "Categories are viewable by owner"
+    on public.categories for select
+    using ( auth.uid() = user_id );
 
-create policy "Users can view own transactions"
-    on transactions for select
-    using (auth.uid() = user_id);
+create policy "Categories are insertable by owner"
+    on public.categories for insert
+    with check ( auth.uid() = user_id );
 
-create policy "Users can manage own transactions"
-    on transactions for all
-    using (auth.uid() = user_id);
+create policy "Categories are updatable by owner"
+    on public.categories for update
+    using ( auth.uid() = user_id );
+
+create policy "Categories are deletable by owner"
+    on public.categories for delete
+    using ( auth.uid() = user_id );
+
+-- Policies for transactions table
+create policy "Transactions are viewable by owner"
+    on public.transactions for select
+    using ( auth.uid() = user_id );
+
+create policy "Transactions are insertable by owner"
+    on public.transactions for insert
+    with check ( auth.uid() = user_id );
+
+create policy "Transactions are updatable by owner"
+    on public.transactions for update
+    using ( auth.uid() = user_id );
+
+create policy "Transactions are deletable by owner"
+    on public.transactions for delete
+    using ( auth.uid() = user_id );
+
+-- Grant access to service role
+grant usage on schema public to service_role;
+grant all privileges on all tables in schema public to service_role;
+grant all privileges on all sequences in schema public to service_role;
+grant all privileges on all functions in schema public to service_role;
 
 -- Add indexes for better performance
 create index if not exists idx_transactions_user_date on transactions(user_id, date);
@@ -1300,189 +770,3 @@ create index if not exists idx_categories_user on categories(user_id);
 create index if not exists idx_transactions_type on transactions(type);
 create index if not exists idx_transactions_date on transactions(date);
 create index if not exists idx_categories_type on categories(type);
-
--- =============================================
--- USAGE EXAMPLES AND SAMPLE OUTPUTS
--- =============================================
-
--- 1. Transaction Management
--- ------------------------
-
--- 1.1 Get Transactions By Date
--- Usage:
--- SELECT * FROM get_transactions_by_date('user-uuid', '2024-01-15');
--- Sample output:
--- category_name | category_icon | category_color | amount  | type    | note
--- -------------+--------------+---------------+---------+---------+-------------
--- Food         | fastfood     | #FF5252       | 50.00   | expense | Lunch
--- Transport    | car          | #448AFF       | 25.00   | expense | Bus fare
--- Salary       | salary       | #4CAF50       | 5000.00 | income  | Monthly salary
-
--- 2. Category Analysis
--- -------------------
-
--- 2.1 Get Category Summary (Monthly)
--- Usage:
--- SELECT * FROM get_category_summary('user-uuid', 2024, 1, 'expense'::transaction_type);
--- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage
--- -------------+--------------+---------------+--------------+------------
--- Food         | fastfood     | #FF5252       | 500.00       | 45.45
--- Transport    | car          | #448AFF       | 300.00       | 27.27
--- Bills        | payments     | #FF9800       | 200.00       | 18.18
--- Shopping     | cart         | #E91E63       | 100.00       | 9.09
-
--- 2.2 Get Category Breakdown By Type (Monthly)
--- Note: This function includes categories with zero amounts
--- Usage:
--- SELECT * FROM get_category_breakdown_by_type('user-uuid', 2024, 1, 'expense'::transaction_type);
--- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage
--- -------------+--------------+---------------+--------------+------------
--- Food         | fastfood     | #FF5252       | 500.00       | 45.45
--- Transport    | car          | #448AFF       | 300.00       | 27.27
--- Bills        | payments     | #FF9800       | 200.00       | 18.18
--- Shopping     | cart         | #E91E63       | 100.00       | 9.09
--- Houseware    | home         | #9C27B0       | 0.00         | 0.00
-
--- 3. Monthly Analysis
--- ------------------
-
--- 3.1 Get Monthly Balance Details
--- Usage:
--- SELECT * FROM get_monthly_balance_by_month_year('user-uuid', 2024, 1);
--- Sample output:
--- total_income | total_expense | total_investment | net_balance
--- -------------+---------------+-----------------+-------------
---     5000.00  |     1100.00   |        500.00   |    3400.00
-
--- 3.2 Get Monthly Income Total
--- Usage:
--- SELECT get_monthly_income_total('user-uuid', 1, 2024);
--- Sample output:
---  monthly_income_total
--- --------------------
---            5000.00
-
--- 3.3 Get Monthly Expense Total
--- Usage:
--- SELECT get_monthly_expense_total('user-uuid', 1, 2024);
--- Sample output:
---  monthly_expense_total
--- ---------------------
---             1100.00
-
--- 3.4 Get Monthly Investment Total
--- Usage:
--- SELECT get_monthly_investment_total('user-uuid', 1, 2024);
--- Sample output:
---  monthly_investment_total
--- -----------------------
---               500.00
-
--- 3.5 Get Monthly Net Balance
--- Usage:
--- SELECT get_monthly_net_balance('user-uuid', 1, 2024);
--- Sample output:
---  monthly_net_balance
--- ------------------
---           3400.00
-
--- 4. Trend Analysis
--- ----------------
-
--- 4.1 Get Monthly Income Trend
--- Usage:
--- SELECT * FROM get_monthly_income_trend('user-uuid', 2024);
--- Sample output:
--- month | month_name | amount  | running_total | year_to_date_total
--- ------+------------+---------+---------------+-------------------
---     1 | January    | 5000.00 |      5000.00 |          15000.00
---     2 | February   | 5000.00 |     10000.00 |          15000.00
---     3 | March      | 5000.00 |     15000.00 |          15000.00
---     4 | April      | 0.00    |     15000.00 |          15000.00
-
--- 4.2 Get Monthly Expense Trend
--- Usage:
--- SELECT * FROM get_monthly_expense_trend('user-uuid', 2024);
--- Sample output:
--- month | month_name | amount  | running_total | year_to_date_total
--- ------+------------+---------+---------------+-------------------
---     1 | January    | 1100.00 |      1100.00 |           3300.00
---     2 | February   | 1200.00 |      2300.00 |           3300.00
---     3 | March      | 1000.00 |      3300.00 |           3300.00
---     4 | April      | 0.00    |      3300.00 |           3300.00
-
--- 4.3 Get Monthly Investment Trend
--- Usage:
--- SELECT * FROM get_monthly_investment_trend('user-uuid', 2024);
--- Sample output:
--- month | month_name | amount  | running_total | year_to_date_total
--- ------+------------+---------+---------------+-------------------
---     1 | January    | 500.00  |       500.00 |           1500.00
---     2 | February   | 500.00  |      1000.00 |           1500.00
---     3 | March      | 500.00  |      1500.00 |           1500.00
---     4 | April      | 0.00    |      1500.00 |           1500.00
-
--- 5. Annual Reports
--- ----------------
-
--- 5.1 Get Annual Income Report
--- Usage:
--- SELECT * FROM get_annual_income_report('user-uuid', 2024);
--- Sample output:
--- month_number | month_name | monthly_amount | running_total
--- -------------+------------+---------------+---------------
---           1 | January    |       5000.00 |       5000.00
---           2 | February   |       5000.00 |      10000.00
---           3 | March      |       5000.00 |      15000.00
-
--- 5.2 Get Annual Income By Categories
--- Usage:
--- SELECT * FROM get_annual_income_by_categories('user-uuid', 2024);
--- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage
--- -------------+--------------+---------------+--------------+------------
--- Salary       | salary       | #4CAF50       |     50000.00 |      83.33
--- Freelance    | work         | #8BC34A       |      8000.00 |      13.33
--- Bonus        | star         | #CDDC39       |      2000.00 |       3.33
-
--- 5.3 Get Annual Expense By Categories
--- Usage:
--- SELECT * FROM get_annual_expense_by_categories('user-uuid', 2024);
--- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage
--- -------------+--------------+---------------+--------------+------------
--- Food         | fastfood     | #FF5252       |      6000.00 |      40.00
--- Transport    | car          | #448AFF       |      4500.00 |      30.00
--- Bills        | payments     | #FF9800       |      3000.00 |      20.00
--- Shopping     | cart         | #E91E63       |      1500.00 |      10.00
-
--- 6. Investment Analysis
--- ---------------------
-
--- 6.1 Get All Time Investment By Categories
--- Usage:
--- SELECT * FROM get_all_time_investment_by_categories('user-uuid');
--- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage
--- -------------+--------------+---------------+--------------+------------
--- Stocks       | trending_up  | #795548       |     15000.00 |      60.00
--- Real Estate  | home         | #607D8B       |      7500.00 |      30.00
--- Crypto       | currency     | #9E9E9E       |      2500.00 |      10.00
-
--- 7. Combined Reports
--- ------------------
-
--- 7.1 Get All Monthly Totals
--- Usage:
--- SELECT 
---     get_monthly_income_total('user-uuid', 1, 2024) as total_income,
---     get_monthly_expense_total('user-uuid', 1, 2024) as total_expense,
---     get_monthly_investment_total('user-uuid', 1, 2024) as total_investment,
---     get_monthly_net_balance('user-uuid', 1, 2024) as net_balance;
--- Sample output:
---  total_income | total_expense | total_investment | net_balance
--- -------------+---------------+-----------------+-------------
---     5000.00  |     2500.00   |       1000.00   |    1500.00
-

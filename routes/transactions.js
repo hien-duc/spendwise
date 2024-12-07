@@ -1,11 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../supabase');
-const { 
-    validateTransaction, 
-    validateDate,
-    handleValidationErrors 
-} = require('../middleware/validators');
+const { validateTransaction, validateDate, handleValidationErrors } = require('../middleware/validators');
 
 /**
  * @swagger
@@ -22,78 +18,31 @@ const {
  *           schema:
  *             $ref: '#/components/schemas/Transaction'
  *     responses:
- *       200:
+ *       201:
  *         description: Transaction created successfully
  *       400:
  *         description: Invalid input data
  *       401:
  *         description: Unauthorized
  */
-router.post('/', 
-    validateTransaction,
-    handleValidationErrors,
-    async (req, res, next) => {
-        const { category_id, amount, note, date, type } = req.body;
-        try {
-            const { data, error } = await supabase
-                .rpc('create_transaction', {
-                    user_id_param: req.user.id,
-                    category_id_param: category_id,
-                    amount_param: amount,
-                    note_param: note,
-                    date_param: date,
-                    type_param: type
-                });
-            if (error) throw error;
-            res.json(data);
-        } catch (error) {
-            next(error);
-        }
-    }
-);
-
-/**
- * @swagger
- * /api/transactions:
- *   get:
- *     summary: Get all transactions
- *     tags: [Transactions]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 50
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           default: 0
- *     responses:
- *       200:
- *         description: List of transactions
- */
-router.get('/', async (req, res) => {
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-    
+router.post('/', validateTransaction, handleValidationErrors, async (req, res) => {
+    const { category_id, amount, note, date, type } = req.body;
     try {
-        const { data, error, count } = await supabase
+        const { data, error } = await supabase
             .from('transactions')
-            .select('*, categories(name, icon)', { count: 'exact' })
-            .eq('user_id', req.user.id)
-            .order('date', { ascending: false })
-            .range(offset, offset + limit - 1);
+            .insert([{
+                user_id: req.user.id,
+                category_id,
+                amount,
+                note,
+                date,
+                type
+            }])
+            .select('*, categories(*)')
+            .single();
 
         if (error) throw error;
-        res.json({
-            data,
-            total: count,
-            limit,
-            offset
-        });
+        res.status(201).json(data);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -101,38 +50,27 @@ router.get('/', async (req, res) => {
 
 /**
  * @swagger
- * /api/transactions/{id}:
+ * /api/transactions:
  *   get:
- *     summary: Get a transaction by ID
+ *     summary: Get all transactions for the authenticated user
  *     tags: [Transactions]
  *     security:
  *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
  *     responses:
  *       200:
- *         description: Transaction details
- *       404:
- *         description: Transaction not found
+ *         description: List of all transactions
+ *       401:
+ *         description: Unauthorized
  */
-router.get('/:id', async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('transactions')
-            .select('*, categories(name, icon)')
-            .eq('id', req.params.id)
+            .select('*, categories(*)')
             .eq('user_id', req.user.id)
-            .single();
+            .order('date', { ascending: false });
 
         if (error) throw error;
-        if (!data) {
-            return res.status(404).json({ error: 'Transaction not found' });
-        }
         res.json(data);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -141,7 +79,45 @@ router.get('/:id', async (req, res) => {
 
 /**
  * @swagger
- * /api/transactions/{date}:
+ * /api/transactions/calendar/{year}/{month}:
+ *   get:
+ *     summary: Get monthly calendar data
+ *     tags: [Transactions]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: year
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: path
+ *         name: month
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Monthly calendar data
+ */
+router.get('/calendar/:year/:month', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .rpc('get_monthly_calendar_data', {
+                user_id_param: req.user.id,
+                year_param: parseInt(req.params.year),
+                month_param: parseInt(req.params.month)
+            });
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * @swagger
+ * /api/transactions/date/{date}:
  *   get:
  *     summary: Get transactions by date
  *     tags: [Transactions]
@@ -154,30 +130,25 @@ router.get('/:id', async (req, res) => {
  *         schema:
  *           type: string
  *           format: date
- *         description: Date to fetch transactions for
  *     responses:
  *       200:
- *         description: List of transactions
- *       401:
- *         description: Unauthorized
+ *         description: List of transactions for the date
  */
-router.get('/:date',
-    validateDate,
-    handleValidationErrors,
-    async (req, res, next) => {
-        try {
-            const { data, error } = await supabase
-                .rpc('get_transactions_by_date', {
-                    user_id_param: req.user.id,
-                    date_param: req.params.date
-                });
-            if (error) throw error;
-            res.json(data);
-        } catch (error) {
-            next(error);
-        }
+router.get('/date/:date', validateDate, handleValidationErrors, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('transactions')
+            .select('*, categories(*)')
+            .eq('user_id', req.user.id)
+            .eq('date', req.params.date)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
-);
+});
 
 /**
  * @swagger
@@ -203,37 +174,35 @@ router.get('/:date',
  *     responses:
  *       200:
  *         description: Transaction updated successfully
+ *       404:
+ *         description: Transaction not found
  */
-router.put('/:id', 
-    validateTransaction,
-    handleValidationErrors,
-    async (req, res) => {
-        const { category_id, amount, note, date, type } = req.body;
-        try {
-            const { data, error } = await supabase
-                .from('transactions')
-                .update({
-                    category_id,
-                    amount,
-                    note,
-                    date,
-                    type
-                })
-                .eq('id', req.params.id)
-                .eq('user_id', req.user.id)
-                .select()
-                .single();
+router.put('/:id', validateTransaction, handleValidationErrors, async (req, res) => {
+    const { category_id, amount, note, date, type } = req.body;
+    try {
+        const { data, error } = await supabase
+            .from('transactions')
+            .update({
+                category_id,
+                amount,
+                note,
+                date,
+                type
+            })
+            .eq('id', req.params.id)
+            .eq('user_id', req.user.id)
+            .select('*, categories(*)')
+            .single();
 
-            if (error) throw error;
-            if (!data) {
-                return res.status(404).json({ error: 'Transaction not found' });
-            }
-            res.json(data);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
+        if (error) throw error;
+        if (!data) {
+            return res.status(404).json({ error: 'Transaction not found' });
         }
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
-);
+});
 
 /**
  * @swagger
