@@ -12,6 +12,10 @@ const categoriesRouter = require('./routes/categories');
 const reportsRouter = require('./routes/reports');
 const profilesRouter = require('./routes/profiles');
 const trendsRouter = require('./routes/trends');
+const financialGoalsRouter = require('./routes/financial_goals');
+const fixedCostsRouter = require('./routes/fixed_costs');
+const periodicIncomeRouter = require('./routes/periodic_income');
+const fixedInvestmentsRouter = require('./routes/fixed_investments');
 
 const app = express();
 
@@ -53,11 +57,15 @@ app.use(async (req, res, next) => {
 });
 
 // Protected API routes
-app.use('/api/transactions', authenticateUser, transactionsRouter);
+app.use(['/api/transactions', '/api/financial'], authenticateUser, transactionsRouter);
 app.use('/api/categories', authenticateUser, categoriesRouter);
 app.use('/api/reports', authenticateUser, reportsRouter);
 app.use('/api/profiles', authenticateUser, profilesRouter);
 app.use('/api/trends', authenticateUser, trendsRouter);
+app.use('/api/financial/financial-goals', authenticateUser, financialGoalsRouter);
+app.use('/api/financial/fixed-costs', authenticateUser, fixedCostsRouter);
+app.use('/api/financial/periodic-income', authenticateUser, periodicIncomeRouter);
+app.use('/api/financial/fixed-investments', authenticateUser, fixedInvestmentsRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

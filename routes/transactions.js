@@ -238,4 +238,45 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/transactions/generate-transactions:
+ *   post:
+ *     summary: Generate recurring transactions from fixed costs, periodic income, and fixed investments
+ *     tags: [Transactions]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Transactions generated successfully
+ *       500:
+ *         description: Server error
+ */
+router.post('/generate-transactions', async (req, res) => {
+    try {
+        // Call the PostgreSQL function to generate transactions
+        const { error } = await supabase.rpc('schedule_recurring_transactions');
+        
+        if (error) throw error;
+
+        // Fetch the newly generated transactions
+        const { data: transactions, error: fetchError } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', req.user.id)
+            .order('date', { ascending: false })
+            .limit(10); // Get the latest 10 transactions
+
+        if (fetchError) throw fetchError;
+
+        res.json({
+            message: 'Transactions generated successfully',
+            latest_transactions: transactions
+        });
+    } catch (error) {
+        console.error('Error generating transactions:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;

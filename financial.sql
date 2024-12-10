@@ -770,3 +770,353 @@ create index if not exists idx_categories_user on categories(user_id);
 create index if not exists idx_transactions_type on transactions(type);
 create index if not exists idx_transactions_date on transactions(date);
 create index if not exists idx_categories_type on categories(type);
+
+CREATE TABLE public.financial_goals (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+    name TEXT NOT NULL,
+    target_amount DECIMAL(12,2) NOT NULL,
+    current_amount DECIMAL(12,2) DEFAULT 0,
+    deadline DATE,
+    status TEXT DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'cancelled')),
+);
+
+-- Enable RLS for financial_goals table
+ALTER TABLE public.financial_goals ENABLE ROW LEVEL SECURITY;
+
+-- Policy for viewing financial goals
+CREATE POLICY "Users can view their own financial goals"
+    ON public.financial_goals
+    FOR SELECT
+    USING (auth.uid() = user_id);
+
+-- Policy for creating financial goals
+CREATE POLICY "Users can create their own financial goals"
+    ON public.financial_goals
+    FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+-- Policy for updating financial goals
+CREATE POLICY "Users can update their own financial goals"
+    ON public.financial_goals
+    FOR UPDATE
+    USING (auth.uid() = user_id);
+
+-- Policy for deleting financial goals
+CREATE POLICY "Users can delete their own financial goals"
+    ON public.financial_goals
+    FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- Grant access to service role
+GRANT ALL ON public.financial_goals TO service_role;
+
+-- Create index for better performance
+CREATE INDEX IF NOT EXISTS idx_financial_goals_user_id ON public.financial_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_financial_goals_status ON public.financial_goals(status);
+
+-- fixed income functions
+-- Create enum type for frequency
+CREATE TYPE frequency_type AS ENUM (
+    'daily',
+    'weekly',
+    'biweekly',
+    'monthly',
+    'quarterly',
+    'annually'
+);
+
+-- Fixed Costs Table
+CREATE TABLE public.fixed_costs (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+    category_id uuid REFERENCES public.categories(id) ON DELETE SET NULL,
+    amount decimal(12,2) NOT NULL,
+    frequency frequency_type NOT NULL,
+    start_date date NOT NULL,
+    end_date date,
+    note text,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    last_generated_date date
+);
+
+-- Periodic Income Table
+CREATE TABLE public.periodic_income (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+    category_id uuid REFERENCES public.categories(id) ON DELETE SET NULL,
+    amount decimal(12,2) NOT NULL,
+    frequency frequency_type NOT NULL,
+    start_date date NOT NULL,
+    end_date date,
+    note text,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    last_generated_date date
+);
+
+-- Fixed Investments Table
+CREATE TABLE public.fixed_investments (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id uuid REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+    category_id uuid REFERENCES public.categories(id) ON DELETE SET NULL,
+    amount decimal(12,2) NOT NULL,
+    frequency frequency_type NOT NULL,
+    start_date date NOT NULL,
+    end_date date,
+    expected_return_rate decimal(5,2),
+    investment_type text NOT NULL,
+    note text,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    last_generated_date date
+);
+
+-- Function to generate transactions from fixed costs
+CREATE OR REPLACE FUNCTION generate_fixed_cost_transactions()
+RETURNS void AS $$
+DECLARE
+    fixed_cost RECORD;
+    next_date DATE;
+BEGIN
+    FOR fixed_cost IN 
+        SELECT * FROM fixed_costs 
+        WHERE is_active = true 
+        AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+    LOOP
+        -- Calculate next date based on last generated date or start date
+        next_date := COALESCE(fixed_cost.last_generated_date, fixed_cost.start_date);
+        
+        WHILE next_date <= CURRENT_DATE AND (fixed_cost.end_date IS NULL OR next_date <= fixed_cost.end_date) LOOP
+            -- Insert transaction
+            INSERT INTO transactions (
+                user_id,
+                category_id,
+                amount,
+                note,
+                date,
+                type
+            ) VALUES (
+                fixed_cost.user_id,
+                fixed_cost.category_id,
+                fixed_cost.amount,
+                COALESCE(fixed_cost.note, 'Auto-generated fixed cost'),
+                next_date,
+                'expense'
+            );
+
+            -- Calculate next date based on frequency
+            next_date := CASE fixed_cost.frequency
+                WHEN 'daily' THEN next_date + INTERVAL '1 day'
+                WHEN 'weekly' THEN next_date + INTERVAL '1 week'
+                WHEN 'biweekly' THEN next_date + INTERVAL '2 weeks'
+                WHEN 'monthly' THEN next_date + INTERVAL '1 month'
+                WHEN 'quarterly' THEN next_date + INTERVAL '3 months'
+                WHEN 'annually' THEN next_date + INTERVAL '1 year'
+            END;
+        END LOOP;
+
+        -- Update last generated date
+        UPDATE fixed_costs 
+        SET last_generated_date = CURRENT_DATE
+        WHERE id = fixed_cost.id;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to generate transactions from periodic income
+CREATE OR REPLACE FUNCTION generate_periodic_income_transactions()
+RETURNS void AS $$
+DECLARE
+    periodic_inc RECORD;
+    next_date DATE;
+BEGIN
+    FOR periodic_inc IN 
+        SELECT * FROM periodic_income 
+        WHERE is_active = true 
+        AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+    LOOP
+        -- Calculate next date based on last generated date or start date
+        next_date := COALESCE(periodic_inc.last_generated_date, periodic_inc.start_date);
+        
+        WHILE next_date <= CURRENT_DATE AND (periodic_inc.end_date IS NULL OR next_date <= periodic_inc.end_date) LOOP
+            -- Insert transaction
+            INSERT INTO transactions (
+                user_id,
+                category_id,
+                amount,
+                note,
+                date,
+                type
+            ) VALUES (
+                periodic_inc.user_id,
+                periodic_inc.category_id,
+                periodic_inc.amount,
+                COALESCE(periodic_inc.note, 'Auto-generated periodic income'),
+                next_date,
+                'income'
+            );
+
+            -- Calculate next date based on frequency
+            next_date := CASE periodic_inc.frequency
+                WHEN 'daily' THEN next_date + INTERVAL '1 day'
+                WHEN 'weekly' THEN next_date + INTERVAL '1 week'
+                WHEN 'biweekly' THEN next_date + INTERVAL '2 weeks'
+                WHEN 'monthly' THEN next_date + INTERVAL '1 month'
+                WHEN 'quarterly' THEN next_date + INTERVAL '3 months'
+                WHEN 'annually' THEN next_date + INTERVAL '1 year'
+            END;
+        END LOOP;
+
+        -- Update last generated date
+        UPDATE periodic_income 
+        SET last_generated_date = CURRENT_DATE
+        WHERE id = periodic_inc.id;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to generate transactions from fixed investments
+CREATE OR REPLACE FUNCTION generate_fixed_investment_transactions()
+RETURNS void AS $$
+DECLARE
+    fixed_inv RECORD;
+    next_date DATE;
+    return_amount DECIMAL(12,2);
+BEGIN
+    FOR fixed_inv IN 
+        SELECT * FROM fixed_investments 
+        WHERE is_active = true 
+        AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+    LOOP
+        -- Calculate next date based on last generated date or start date
+        next_date := COALESCE(fixed_inv.last_generated_date, fixed_inv.start_date);
+        
+        WHILE next_date <= CURRENT_DATE AND (fixed_inv.end_date IS NULL OR next_date <= fixed_inv.end_date) LOOP
+            -- Calculate return amount if expected_return_rate is set
+            return_amount := fixed_inv.amount;
+            IF fixed_inv.expected_return_rate IS NOT NULL THEN
+                return_amount := fixed_inv.amount * (1 + fixed_inv.expected_return_rate / 100.0);
+            END IF;
+
+            -- Insert investment transaction
+            INSERT INTO transactions (
+                user_id,
+                category_id,
+                amount,
+                note,
+                date,
+                type
+            ) VALUES (
+                fixed_inv.user_id,
+                fixed_inv.category_id,
+                return_amount,
+                COALESCE(fixed_inv.note, 'Auto-generated investment: ' || fixed_inv.investment_type),
+                next_date,
+                'investment'
+            );
+
+            -- Calculate next date based on frequency
+            next_date := CASE fixed_inv.frequency
+                WHEN 'daily' THEN next_date + INTERVAL '1 day'
+                WHEN 'weekly' THEN next_date + INTERVAL '1 week'
+                WHEN 'biweekly' THEN next_date + INTERVAL '2 weeks'
+                WHEN 'monthly' THEN next_date + INTERVAL '1 month'
+                WHEN 'quarterly' THEN next_date + INTERVAL '3 months'
+                WHEN 'annually' THEN next_date + INTERVAL '1 year'
+            END;
+        END LOOP;
+
+        -- Update last generated date
+        UPDATE fixed_investments 
+        SET last_generated_date = CURRENT_DATE
+        WHERE id = fixed_inv.id;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create a function to schedule the generation of transactions
+CREATE OR REPLACE FUNCTION schedule_recurring_transactions()
+RETURNS void AS $$
+BEGIN
+    PERFORM generate_fixed_cost_transactions();
+    PERFORM generate_periodic_income_transactions();
+    PERFORM generate_fixed_investment_transactions();
+END;
+$$ LANGUAGE plpgsql;
+
+-- Enable Row Level Security for all tables
+ALTER TABLE public.fixed_costs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.periodic_income ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fixed_investments ENABLE ROW LEVEL SECURITY;
+
+-- Policies for fixed_costs
+CREATE POLICY "Users can view their own fixed costs"
+    ON public.fixed_costs FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own fixed costs"
+    ON public.fixed_costs FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own fixed costs"
+    ON public.fixed_costs FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own fixed costs"
+    ON public.fixed_costs FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- Policies for periodic_income
+CREATE POLICY "Users can view their own periodic income"
+    ON public.periodic_income FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own periodic income"
+    ON public.periodic_income FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own periodic income"
+    ON public.periodic_income FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own periodic income"
+    ON public.periodic_income FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- Policies for fixed_investments
+CREATE POLICY "Users can view their own fixed investments"
+    ON public.fixed_investments FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own fixed investments"
+    ON public.fixed_investments FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own fixed investments"
+    ON public.fixed_investments FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own fixed investments"
+    ON public.fixed_investments FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- Grant access to service role for all tables
+GRANT ALL ON public.fixed_costs TO service_role;
+GRANT ALL ON public.periodic_income TO service_role;
+GRANT ALL ON public.fixed_investments TO service_role;
+
+-- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_fixed_costs_user_id ON public.fixed_costs(user_id);
+CREATE INDEX IF NOT EXISTS idx_fixed_costs_category_id ON public.fixed_costs(category_id);
+CREATE INDEX IF NOT EXISTS idx_fixed_costs_frequency ON public.fixed_costs(frequency);
+
+CREATE INDEX IF NOT EXISTS idx_periodic_income_user_id ON public.periodic_income(user_id);
+CREATE INDEX IF NOT EXISTS idx_periodic_income_category_id ON public.periodic_income(category_id);
+CREATE INDEX IF NOT EXISTS idx_periodic_income_frequency ON public.periodic_income(frequency);
+
+CREATE INDEX IF NOT EXISTS idx_fixed_investments_user_id ON public.fixed_investments(user_id);
+CREATE INDEX IF NOT EXISTS idx_fixed_investments_category_id ON public.fixed_investments(category_id);
+CREATE INDEX IF NOT EXISTS idx_fixed_investments_frequency ON public.fixed_investments(frequency);
+CREATE INDEX IF NOT EXISTS idx_fixed_investments_investment_type ON public.fixed_investments(investment_type);
