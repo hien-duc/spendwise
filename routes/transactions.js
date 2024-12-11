@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../supabase');
-const { validateTransaction, validateDate, handleValidationErrors } = require('../middleware/validators');
+const { validateTransaction, validateDate, handleValidationErrors, validateYearMonth } = require('../middleware/validators');
 
 /**
  * @swagger
@@ -70,44 +70,6 @@ router.get('/', async (req, res) => {
             .eq('user_id', req.user.id)
             .order('date', { ascending: false });
 
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * @swagger
- * /api/transactions/calendar/{year}/{month}:
- *   get:
- *     summary: Get monthly calendar data
- *     tags: [Transactions]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: year
- *         required: true
- *         schema:
- *           type: integer
- *       - in: path
- *         name: month
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Monthly calendar data
- */
-router.get('/calendar/:year/:month', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .rpc('get_monthly_calendar_data', {
-                user_id_param: req.user.id,
-                year_param: parseInt(req.params.year),
-                month_param: parseInt(req.params.month)
-            });
         if (error) throw error;
         res.json(data);
     } catch (error) {
@@ -240,41 +202,79 @@ router.delete('/:id', async (req, res) => {
 
 /**
  * @swagger
- * /api/transactions/generate-transactions:
- *   post:
- *     summary: Generate recurring transactions from fixed costs, periodic income, and fixed investments
+ * /api/transactions/calendar/{year}/{month}:
+ *   get:
+ *     summary: Get monthly calendar data with transactions and totals
  *     tags: [Transactions]
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: year
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Year for the calendar data
+ *       - in: path
+ *         name: month
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Month for the calendar data (1-12)
  *     responses:
  *       200:
- *         description: Transactions generated successfully
- *       500:
- *         description: Server error
+ *         description: Monthly calendar data with transactions and totals
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   transaction_id:
+ *                     type: string
+ *                     format: uuid
+ *                   transaction_date:
+ *                     type: string
+ *                     format: date
+ *                   category_id:
+ *                     type: string
+ *                     format: uuid
+ *                   category_name:
+ *                     type: string
+ *                   category_icon:
+ *                     type: string
+ *                   category_color:
+ *                     type: string
+ *                   amount:
+ *                     type: number
+ *                   transaction_type:
+ *                     type: string
+ *                     enum: [income, expense, investment]
+ *                   note:
+ *                     type: string
+ *                   month_total_income:
+ *                     type: number
+ *                   month_total_expense:
+ *                     type: number
+ *                   month_total_investment:
+ *                     type: number
+ *                   month_net_balance:
+ *                     type: number
  */
-router.post('/generate-transactions', async (req, res) => {
+router.get('/calendar/:year/:month', validateYearMonth, handleValidationErrors, async (req, res) => {
+    const { year, month } = req.params;
     try {
-        // Call the PostgreSQL function to generate transactions
-        const { error } = await supabase.rpc('schedule_recurring_transactions');
+        const { data, error } = await supabase
+            .rpc('get_monthly_calendar_data', {
+                user_id_param: req.user.id,
+                year_param: parseInt(year),
+                month_param: parseInt(month)
+            });
         
         if (error) throw error;
-
-        // Fetch the newly generated transactions
-        const { data: transactions, error: fetchError } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .order('date', { ascending: false })
-            .limit(10); // Get the latest 10 transactions
-
-        if (fetchError) throw fetchError;
-
-        res.json({
-            message: 'Transactions generated successfully',
-            latest_transactions: transactions
-        });
+        res.json(data);
     } catch (error) {
-        console.error('Error generating transactions:', error);
         res.status(500).json({ error: error.message });
     }
 });

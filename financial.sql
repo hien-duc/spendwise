@@ -43,18 +43,18 @@ begin
     insert into public.categories (user_id, name, type, icon, color, is_default) values
     -- Expense categories
     (user_id_param, 'Food', 'expense', 'fastfood', '#FF5252', true),
-    (user_id_param, 'Transportation', 'expense', 'directions_car', '#448AFF', true),
-    (user_id_param, 'Houseware', 'expense', 'home_work', '#9C27B0', true),
+    (user_id_param, 'Transportation', 'expense', 'directions-car', '#448AFF', true),
+    (user_id_param, 'Houseware', 'expense', 'home-work', '#9C27B0', true),
     (user_id_param, 'Bills', 'expense', 'payments', '#FF9800', true),
-    (user_id_param, 'Shopping', 'expense', 'shopping_bag', '#E91E63', true),
+    (user_id_param, 'Shopping', 'expense', 'shopping-bag', '#E91E63', true),
     -- Income categories
-    (user_id_param, 'Salary', 'income', 'universal_currency_alt', '#4CAF50', true),
-    (user_id_param, 'Freelance', 'income', 'person_apron', '#8BC34A', true),
-    (user_id_param, 'Bonus', 'income', 'bonus', '#CDDC39', true),
+    (user_id_param, 'Salary', 'income', 'currency-exchange', '#4CAF50', true),
+    (user_id_param, 'Freelance', 'income', 'work', '#8BC34A', true),
+    (user_id_param, 'Bonus', 'income', 'money', '#CDDC39', true),
     -- Investment categories
-    (user_id_param, 'Stocks', 'investment', 'inventory_2', '#795548', true),
+    (user_id_param, 'Stocks', 'investment', 'inventory', '#795548', true),
     (user_id_param, 'Real Estate', 'investment', 'domain', '#607D8B', true),
-    (user_id_param, 'Crypto', 'investment', 'currency_bitcoin', '#9E9E9E', true);
+    (user_id_param, 'Crypto', 'investment', 'currency-bitcoin', '#9E9E9E', true);
 end;
 $$ language plpgsql;
 
@@ -496,7 +496,76 @@ $$ LANGUAGE plpgsql;
 --       2024 |            4 | April      |      5000.00 |           20000.00 |         60000.00 |        2000.00 |             8000.00 |          24000.00 |          1000.00 |               4000.00 |            12000.00
 --       ...and so on
 
+-- Get annual transactions by categories report (combined function)
+-- category annual  report
+CREATE OR REPLACE FUNCTION get_annual_categories_summary(
+    user_id_param UUID,
+    year_param INTEGER
+)
+RETURNS TABLE (
+    category_name TEXT,
+    category_icon TEXT,
+    category_color TEXT,
+    total_amount DECIMAL(12,2),
+    percentage DECIMAL(5,2),
+    transaction_type transaction_type
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH category_totals AS (
+        SELECT 
+            c.name,
+            c.icon,
+            c.color,
+            COALESCE(SUM(t.amount), 0) as total,
+            c.type as trans_type
+        FROM categories c
+        LEFT JOIN transactions t ON 
+            t.category_id = c.id AND
+            t.user_id = user_id_param AND
+            EXTRACT(YEAR FROM t.date) = year_param
+        WHERE c.user_id = user_id_param
+        GROUP BY c.id, c.name, c.icon, c.color, c.type
+    ),
+    type_totals AS (
+        SELECT 
+            trans_type,
+            SUM(total) as type_total
+        FROM category_totals
+        GROUP BY trans_type
+    )
+    SELECT 
+        ct.name,
+        ct.icon,
+        ct.color,
+        ct.total,
+        CASE 
+            WHEN tt.type_total = 0 THEN 0
+            ELSE ROUND((ct.total / tt.type_total * 100)::numeric, 2)
+        END,
+        ct.trans_type
+    FROM category_totals ct
+    JOIN type_totals tt ON ct.trans_type = tt.trans_type
+    ORDER BY ct.trans_type, ct.total DESC;
+END;
+$$ LANGUAGE plpgsql;
 
+-- Usage example for the combined annual categories function
+-- Usage:
+-- SELECT * FROM get_annual_categories_summary('user-uuid', 2024);
+-- Sample output:
+-- category_name | category_icon | category_color | total_amount | percentage | transaction_type
+-- -------------+--------------+---------------+--------------+------------+-----------------
+-- Salary       | salary       | #4CAF50       |     50000.00 |      75.00 | income
+-- Freelance    | work         | #8BC34A       |      8000.00 |      13.33 | income
+-- Other        | more         | #CDDC39       |      1666.67 |       2.50 | income
+-- Food         | fastfood     | #FF5252       |     24000.00 |      40.00 | expense
+-- Transport    | car          | #448AFF       |     18000.00 |      30.00 | expense
+-- Bills        | payments     | #FF9800       |     12000.00 |      20.00 | expense
+-- Shopping     | cart         | #E91E63       |      6000.00 |      10.00 | expense
+-- Stocks       | trending_up  | #795548       |     30000.00 |      60.00 | investment
+-- Real Estate  | home         | #607D8B       |     15000.00 |      30.00 | investment
+-- Crypto       | currency     | #9E9E9E       |      5000.00 |      10.00 | investment
 
 -- Get all-time financial report with initial balance
 -- all time report
@@ -548,20 +617,6 @@ begin
     order by mt.year, mt.month;
 end;
 $$ language plpgsql;
-
--- Usage examples:
--- First set initial balance:
--- SELECT update_initial_balance('your-user-id', 1000.00);
-
--- Then get the report:
--- SELECT * FROM get_all_time_balance_report('your-user-id');
-
--- Sample output:
--- year | month | month_name | income_amount | expense_amount | investment_amount | net_amount | initial_balance | cumulative_balance
--- -----+-------+------------+--------------+----------------+------------------+------------+-----------------+-------------------
--- 2024 |     1 | January    |      1000.00 |        500.00 |          100.00 |     400.00 |         1000.00 |           1400.00
--- 2024 |     2 | February   |      1200.00 |        600.00 |          200.00 |     400.00 |         1000.00 |           1800.00
--- 2024 |     3 | March      |       800.00 |        400.00 |          100.00 |     300.00 |         1000.00 |           2100.00
 
 
 -- Get all-time transactions by categories report
@@ -634,76 +689,21 @@ $$ LANGUAGE plpgsql;
 -- Real Estate  | home         | #607D8B       |     22500.00 |      30.00 | investment
 -- Crypto       | currency     | #9E9E9E       |      7500.00 |      10.00 | investment
 
--- Get annual transactions by categories report (combined function)
--- category annual  report
-CREATE OR REPLACE FUNCTION get_annual_categories_summary(
-    user_id_param UUID,
-    year_param INTEGER
-)
-RETURNS TABLE (
-    category_name TEXT,
-    category_icon TEXT,
-    category_color TEXT,
-    total_amount DECIMAL(12,2),
-    percentage DECIMAL(5,2),
-    transaction_type transaction_type
-) AS $$
-BEGIN
-    RETURN QUERY
-    WITH category_totals AS (
-        SELECT 
-            c.name,
-            c.icon,
-            c.color,
-            COALESCE(SUM(t.amount), 0) as total,
-            c.type as trans_type
-        FROM categories c
-        LEFT JOIN transactions t ON 
-            t.category_id = c.id AND
-            t.user_id = user_id_param AND
-            EXTRACT(YEAR FROM t.date) = year_param
-        WHERE c.user_id = user_id_param
-        GROUP BY c.id, c.name, c.icon, c.color, c.type
-    ),
-    type_totals AS (
-        SELECT 
-            trans_type,
-            SUM(total) as type_total
-        FROM category_totals
-        GROUP BY trans_type
-    )
-    SELECT 
-        ct.name,
-        ct.icon,
-        ct.color,
-        ct.total,
-        CASE 
-            WHEN tt.type_total = 0 THEN 0
-            ELSE ROUND((ct.total / tt.type_total * 100)::numeric, 2)
-        END,
-        ct.trans_type
-    FROM category_totals ct
-    JOIN type_totals tt ON ct.trans_type = tt.trans_type
-    ORDER BY ct.trans_type, ct.total DESC;
-END;
-$$ LANGUAGE plpgsql;
+------------------------------------------------------------
+-- Usage examples:
+-- First set initial balance:
+-- SELECT update_initial_balance('your-user-id', 1000.00);
 
--- Usage example for the combined annual categories function
--- Usage:
--- SELECT * FROM get_annual_categories_summary('user-uuid', 2024);
+-- Then get the report:
+-- SELECT * FROM get_all_time_balance_report('your-user-id');
+
 -- Sample output:
--- category_name | category_icon | category_color | total_amount | percentage | transaction_type
--- -------------+--------------+---------------+--------------+------------+-----------------
--- Salary       | salary       | #4CAF50       |     50000.00 |      75.00 | income
--- Freelance    | work         | #8BC34A       |      8000.00 |      13.33 | income
--- Other        | more         | #CDDC39       |      1666.67 |       2.50 | income
--- Food         | fastfood     | #FF5252       |     24000.00 |      40.00 | expense
--- Transport    | car          | #448AFF       |     18000.00 |      30.00 | expense
--- Bills        | payments     | #FF9800       |     12000.00 |      20.00 | expense
--- Shopping     | cart         | #E91E63       |      6000.00 |      10.00 | expense
--- Stocks       | trending_up  | #795548       |     30000.00 |      60.00 | investment
--- Real Estate  | home         | #607D8B       |     15000.00 |      30.00 | investment
--- Crypto       | currency     | #9E9E9E       |      5000.00 |      10.00 | investment
+-- year | month | month_name | income_amount | expense_amount | investment_amount | net_amount | initial_balance | cumulative_balance
+-- -----+-------+------------+--------------+----------------+------------------+------------+-----------------+-------------------
+-- 2024 |     1 | January    |      1000.00 |        500.00 |          100.00 |     400.00 |         1000.00 |           1400.00
+-- 2024 |     2 | February   |      1200.00 |        600.00 |          200.00 |     400.00 |         1000.00 |           1800.00
+-- 2024 |     3 | March      |       800.00 |        400.00 |          100.00 |     300.00 |         1000.00 |           2100.00
+------------------------------------------------------------
 
 -- Enable Row Level Security (RLS)
 alter table public.profiles enable row level security;

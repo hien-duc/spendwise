@@ -174,50 +174,5 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-/**
- * @swagger
- * /api/categories/summary:
- *   get:
- *     summary: Get category summary
- *     tags: [Categories]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: year
- *         schema:
- *           type: integer
- *         description: Filter by year
- *       - in: query
- *         name: month
- *         schema:
- *           type: integer
- *         description: Filter by month
- *       - in: query
- *         name: type
- *         schema:
- *           type: string
- *           enum: [income, expense]
- *         description: Filter by type
- *     responses:
- *       200:
- *         description: Category summary
- */
-router.get('/summary', validateCategoryFilters, handleValidationErrors, async (req, res) => {
-    const { year, month, type } = req.query;
-    try {
-        const { data, error } = await supabase
-            .rpc('get_category_summary', {
-                user_id_param: req.user.id,
-                year_param: parseInt(year),
-                month_param: parseInt(month),
-                type_param: type
-            });
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
 
 module.exports = router;

@@ -11,7 +11,7 @@ const transactionsRouter = require('./routes/transactions');
 const categoriesRouter = require('./routes/categories');
 const reportsRouter = require('./routes/reports');
 const profilesRouter = require('./routes/profiles');
-const trendsRouter = require('./routes/trends');
+const otherRouter = require('./routes/other');
 const financialGoalsRouter = require('./routes/financial_goals');
 const fixedCostsRouter = require('./routes/fixed_costs');
 const periodicIncomeRouter = require('./routes/periodic_income');
@@ -61,7 +61,7 @@ app.use(['/api/transactions', '/api/financial'], authenticateUser, transactionsR
 app.use('/api/categories', authenticateUser, categoriesRouter);
 app.use('/api/reports', authenticateUser, reportsRouter);
 app.use('/api/profiles', authenticateUser, profilesRouter);
-app.use('/api/trends', authenticateUser, trendsRouter);
+app.use('/api/other', authenticateUser, otherRouter);
 app.use('/api/financial/financial-goals', authenticateUser, financialGoalsRouter);
 app.use('/api/financial/fixed-costs', authenticateUser, fixedCostsRouter);
 app.use('/api/financial/periodic-income', authenticateUser, periodicIncomeRouter);

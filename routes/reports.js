@@ -5,28 +5,26 @@ const { validateYearMonth, handleValidationErrors } = require('../middleware/val
 
 /**
  * @swagger
- * /api/reports/monthly:
+ * /api/reports/monthly/{year}/{month}:
  *   get:
- *     summary: Get monthly financial report
+ *     summary: Get detailed monthly report with category breakdowns and totals
  *     tags: [Reports]
  *     security:
  *       - BearerAuth: []
  *     parameters:
- *       - in: query
+ *       - in: path
  *         name: year
  *         required: true
  *         schema:
  *           type: integer
- *         description: Year for the report
- *       - in: query
+ *       - in: path
  *         name: month
  *         required: true
  *         schema:
  *           type: integer
- *         description: Month for the report (1-12)
  *     responses:
  *       200:
- *         description: Monthly financial report
+ *         description: Monthly report with totals and category breakdowns
  *         content:
  *           application/json:
  *             schema:
@@ -36,24 +34,27 @@ const { validateYearMonth, handleValidationErrors } = require('../middleware/val
  *                   type: number
  *                 total_expense:
  *                   type: number
- *                 net_savings:
+ *                 total_investment:
  *                   type: number
- *                 categories:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       category_id:
- *                         type: string
- *                       category_name:
- *                         type: string
- *                       total_amount:
- *                         type: number
+ *                 net_balance:
+ *                   type: number
+ *                 category_name:
+ *                   type: string
+ *                 category_icon:
+ *                   type: string
+ *                 category_color:
+ *                   type: string
+ *                 category_type:
+ *                   type: string
+ *                 category_amount:
+ *                   type: number
+ *                 category_percentage:
+ *                   type: number
  */
 router.get('/monthly/:year/:month', validateYearMonth, handleValidationErrors, async (req, res) => {
     try {
         const { data, error } = await supabase
-            .rpc('get_monthly_balance_by_month_year', {
+            .rpc('get_monthly_report_data', {
                 user_id_param: req.user.id,
                 year_param: parseInt(req.params.year),
                 month_param: parseInt(req.params.month)
@@ -67,158 +68,59 @@ router.get('/monthly/:year/:month', validateYearMonth, handleValidationErrors, a
 
 /**
  * @swagger
- * /api/reports/annual:
+ * /api/reports/category-trend/{year}/{categoryId}:
  *   get:
- *     summary: Get annual financial report
+ *     summary: Get category trend data for a specific year
  *     tags: [Reports]
  *     security:
  *       - BearerAuth: []
  *     parameters:
- *       - in: query
+ *       - in: path
  *         name: year
  *         required: true
  *         schema:
  *           type: integer
- *         description: Year for the report
+ *       - in: path
+ *         name: categoryId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
  *     responses:
  *       200:
- *         description: Annual financial report
+ *         description: Monthly trend data for the specified category
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 year:
+ *                 month:
  *                   type: integer
- *                 total_income:
+ *                 month_name:
+ *                   type: string
+ *                 amount:
  *                   type: number
- *                 total_expense:
- *                   type: number
- *                 net_savings:
- *                   type: number
- *                 monthly_breakdown:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       month:
- *                         type: integer
- *                       income:
- *                         type: number
- *                       expense:
- *                         type: number
- */
-router.get('/annual/:year', validateYearMonth, handleValidationErrors, async (req, res) => {
-    try {
-        const { data: income, error: incomeError } = await supabase
-            .rpc('get_annual_income_by_categories', {
-                user_id_param: req.user.id,
-                year_param: parseInt(req.params.year)
-            });
-        
-        if (incomeError) throw incomeError;
-
-        const { data: expense, error: expenseError } = await supabase
-            .rpc('get_annual_expense_by_categories', {
-                user_id_param: req.user.id,
-                year_param: parseInt(req.params.year)
-            });
-        
-        if (expenseError) throw expenseError;
-
-        res.json({
-            income,
-            expense
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * @swagger
- * /api/reports/all-time:
- *   get:
- *     summary: Get all-time financial summary
- *     tags: [Reports]
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: All-time financial summary
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 total_income:
- *                   type: number
- *                 total_expense:
- *                   type: number
- *                 net_worth:
- *                   type: number
- *                 transaction_count:
- *                   type: integer
- *                 first_transaction_date:
+ *                 category_name:
+ *                   type: string
+ *                 category_icon:
+ *                   type: string
+ *                 category_color:
+ *                   type: string
+ *                 category_type:
+ *                   type: string
+ *                 date_label:
+ *                   type: string
+ *                 latest_transaction_date:
  *                   type: string
  *                   format: date
  */
-router.get('/all-time', async (req, res) => {
+router.get('/category-trend/:year/:categoryId', async (req, res) => {
     try {
         const { data, error } = await supabase
-            .rpc('get_all_time_balance_report', {
-                user_id_param: req.user.id
-            });
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * @swagger
- * /api/reports/category/annual:
- *   get:
- *     summary: Get category annual report
- *     tags: [Reports]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: year
- *         required: true
- *         schema:
- *           type: integer
- *         description: Year for the report
- *     responses:
- *       200:
- *         description: Category annual report
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 year:
- *                   type: integer
- *                 categories:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       category_id:
- *                         type: string
- *                       category_name:
- *                         type: string
- *                       total_amount:
- *                         type: number
- */
-router.get('/category/annual/:year', validateYearMonth, handleValidationErrors, async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .rpc('get_category_annual_report', {
+            .rpc('get_category_trend_detail', {
                 user_id_param: req.user.id,
-                year_param: parseInt(req.params.year)
+                year_param: parseInt(req.params.year),
+                category_id_param: req.params.categoryId
             });
         if (error) throw error;
         res.json(data);
