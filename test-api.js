@@ -12,7 +12,7 @@ for (const envVar of requiredEnvVars) {
 
 // Default to localhost if API_URL is not set
 if (!process.env.API_URL) {
-    process.env.API_URL = 'http://localhost:3000';
+    process.env.API_URL = 'http://47.128.146.244:3000';
 }
 
 // Test data

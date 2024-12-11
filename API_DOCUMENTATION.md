@@ -2,7 +2,7 @@
 
 ## Base URL
 ```
-http://localhost:3000/api
+http://47.128.146.244:3000/api
 ```
 
 ## Authentication
