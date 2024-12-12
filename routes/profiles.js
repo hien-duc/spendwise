@@ -36,10 +36,6 @@ const { supabase } = require('../supabase');
  *           type: string
  *           format: date-time
  *           description: Profile creation timestamp
- *         updated_at:
- *           type: string
- *           format: date-time
- *           description: Profile last update timestamp
  */
 
 /**
@@ -132,7 +128,6 @@ router.put('/', async (req, res) => {
         if (email) updates.email = email;
         if (currency) updates.currency = currency;
         if (initial_balance !== undefined) updates.initial_balance = initial_balance;
-        updates.updated_at = new Date().toISOString();
 
         const { data, error } = await supabase
             .from('profiles')
@@ -227,10 +222,7 @@ router.patch('/initial-balance', async (req, res) => {
 
         const { data, error } = await supabase
             .from('profiles')
-            .update({ 
-                initial_balance,
-                updated_at: new Date().toISOString()
-            })
+            .update({ initial_balance })
             .eq('id', req.user.id)
             .select()
             .single();
