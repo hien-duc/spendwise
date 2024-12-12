@@ -1,7 +1,12 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { supabase } = require('../supabase');
-const { validateTransaction, validateDate, handleValidationErrors, validateYearMonth } = require('../middleware/validators');
+const { supabase } = require("../supabase");
+const {
+  validateTransaction,
+  validateDate,
+  handleValidationErrors,
+  validateYearMonth,
+} = require("../middleware/validators");
 
 /**
  * @swagger
@@ -25,28 +30,35 @@ const { validateTransaction, validateDate, handleValidationErrors, validateYearM
  *       401:
  *         description: Unauthorized
  */
-router.post('/', validateTransaction, handleValidationErrors, async (req, res) => {
+router.post(
+  "/",
+  validateTransaction,
+  handleValidationErrors,
+  async (req, res) => {
     const { category_id, amount, note, date, type } = req.body;
     try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .insert([{
-                user_id: req.user.id,
-                category_id,
-                amount,
-                note,
-                date,
-                type
-            }])
-            .select('*, categories(*)')
-            .single();
+      const { data, error } = await supabase
+        .from("transactions")
+        .insert([
+          {
+            user_id: req.user.id,
+            category_id,
+            amount,
+            note,
+            date,
+            type,
+          },
+        ])
+        .select("*, categories(*)")
+        .single();
 
-        if (error) throw error;
-        res.status(201).json(data);
+      if (error) throw error;
+      res.status(201).json(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message });
     }
-});
+  }
+);
 
 /**
  * @swagger
@@ -62,19 +74,19 @@ router.post('/', validateTransaction, handleValidationErrors, async (req, res) =
  *       401:
  *         description: Unauthorized
  */
-router.get('/', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('*, categories(*)')
-            .eq('user_id', req.user.id)
-            .order('date', { ascending: false });
+router.get("/", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*, categories(*)")
+      .eq("user_id", req.user.id)
+      .order("date", { ascending: false });
 
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -96,20 +108,47 @@ router.get('/', async (req, res) => {
  *       200:
  *         description: List of transactions for the date
  */
-router.get('/date/:date', validateDate, handleValidationErrors, async (req, res) => {
+router.get(
+  "/date/:date",
+  validateDate,
+  handleValidationErrors,
+  async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('*, categories(*)')
-            .eq('user_id', req.user.id)
-            .eq('date', req.params.date)
-            .order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from("transactions")
+        .select("*, categories(*)")
+        .eq("user_id", req.user.id)
+        .eq("date", req.params.date)
+        .order("created_at", { ascending: false });
 
-        if (error) throw error;
-        res.json(data);
+      if (error) throw error;
+      res.json(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message });
     }
+  }
+);
+
+router.get("/:id", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("id", req.params.id)
+      .eq("user_id", req.user.id)
+      .single(); // Fetch a single record
+
+    if (error) throw error;
+
+    // If no transaction found
+    if (!data) {
+      return res.status(404).json({ message: "Transaction not found" });
+    }
+
+    res.json(data); // Return the transaction data
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -139,32 +178,37 @@ router.get('/date/:date', validateDate, handleValidationErrors, async (req, res)
  *       404:
  *         description: Transaction not found
  */
-router.put('/:id', validateTransaction, handleValidationErrors, async (req, res) => {
+router.put(
+  "/:id",
+  validateTransaction,
+  handleValidationErrors,
+  async (req, res) => {
     const { category_id, amount, note, date, type } = req.body;
     try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .update({
-                category_id,
-                amount,
-                note,
-                date,
-                type
-            })
-            .eq('id', req.params.id)
-            .eq('user_id', req.user.id)
-            .select('*, categories(*)')
-            .single();
+      const { data, error } = await supabase
+        .from("transactions")
+        .update({
+          category_id,
+          amount,
+          note,
+          date,
+          type,
+        })
+        .eq("id", req.params.id)
+        .eq("user_id", req.user.id)
+        .select("*, categories(*)")
+        .single();
 
-        if (error) throw error;
-        if (!data) {
-            return res.status(404).json({ error: 'Transaction not found' });
-        }
-        res.json(data);
+      if (error) throw error;
+      if (!data) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      res.json(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message });
     }
-});
+  }
+);
 
 /**
  * @swagger
@@ -185,19 +229,19 @@ router.put('/:id', validateTransaction, handleValidationErrors, async (req, res)
  *       200:
  *         description: Transaction deleted successfully
  */
-router.delete('/:id', async (req, res) => {
-    try {
-        const { error } = await supabase
-            .from('transactions')
-            .delete()
-            .eq('id', req.params.id)
-            .eq('user_id', req.user.id);
+router.delete("/:id", async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", req.params.id)
+      .eq("user_id", req.user.id);
 
-        if (error) throw error;
-        res.json({ message: 'Transaction deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    if (error) throw error;
+    res.json({ message: "Transaction deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -262,21 +306,25 @@ router.delete('/:id', async (req, res) => {
  *                   month_net_balance:
  *                     type: number
  */
-router.get('/calendar/:year/:month', validateYearMonth, handleValidationErrors, async (req, res) => {
+router.get(
+  "/calendar/:year/:month",
+  validateYearMonth,
+  handleValidationErrors,
+  async (req, res) => {
     const { year, month } = req.params;
     try {
-        const { data, error } = await supabase
-            .rpc('get_monthly_calendar_data', {
-                user_id_param: req.user.id,
-                year_param: parseInt(year),
-                month_param: parseInt(month)
-            });
-        
-        if (error) throw error;
-        res.json(data);
+      const { data, error } = await supabase.rpc("get_monthly_calendar_data", {
+        user_id_param: req.user.id,
+        year_param: parseInt(year),
+        month_param: parseInt(month),
+      });
+
+      if (error) throw error;
+      res.json(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message });
     }
-});
+  }
+);
 
 module.exports = router;
