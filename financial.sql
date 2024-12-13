@@ -1120,3 +1120,46 @@ CREATE INDEX IF NOT EXISTS idx_fixed_investments_user_id ON public.fixed_investm
 CREATE INDEX IF NOT EXISTS idx_fixed_investments_category_id ON public.fixed_investments(category_id);
 CREATE INDEX IF NOT EXISTS idx_fixed_investments_frequency ON public.fixed_investments(frequency);
 CREATE INDEX IF NOT EXISTS idx_fixed_investments_investment_type ON public.fixed_investments(investment_type);
+
+-- Get financial summary for 5 most recent years
+CREATE OR REPLACE FUNCTION get_recent_years_summary(user_id_param UUID)
+RETURNS TABLE (
+    year INTEGER,
+    total_income DECIMAL(12,2),
+    total_expense DECIMAL(12,2),
+    net_amount DECIMAL(12,2)
+) AS $$
+BEGIN
+    -- Check if the requesting user has access to the data
+    IF NOT EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = user_id_param
+        AND id = auth.uid()
+    ) THEN
+        RAISE EXCEPTION 'Not authorized';
+    END IF;
+
+    RETURN QUERY
+    WITH yearly_totals AS (
+        SELECT 
+            EXTRACT(YEAR FROM date)::INTEGER AS year,
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0.00) as income,
+            COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0.00) as expense
+        FROM transactions
+        WHERE user_id = user_id_param
+        GROUP BY EXTRACT(YEAR FROM date)
+    )
+    SELECT 
+        year,
+        income as total_income,
+        expense as total_expense,
+        (income - expense) as net_amount
+    FROM yearly_totals
+    ORDER BY year DESC
+    LIMIT 5;
+END;
+$$ LANGUAGE plpgsql SECURITY INVOKER;
+
+-- Set proper permissions
+REVOKE ALL ON FUNCTION get_recent_years_summary(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION get_recent_years_summary(UUID) TO authenticated;
