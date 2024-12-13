@@ -263,4 +263,50 @@ router.get('/all-time-categories', async (req, res) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/other/recent-years-summary:
+ *   get:
+ *     summary: Get financial summary for 5 most recent years
+ *     tags: [Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Financial summary showing income, expense, and net amount for the 5 most recent years
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   year:
+ *                     type: integer
+ *                   total_income:
+ *                     type: number
+ *                   total_expense:
+ *                     type: number
+ *                   net_amount:
+ *                     type: number
+ *       401:
+ *         description: Unauthorized - User not authenticated
+ *       500:
+ *         description: Internal server error
+ */
+router.get('/recent-years-summary', async (req, res) => {
+    try {
+        const { data, error } = await supabase.rpc('get_recent_years_summary', {
+            user_id_param: req.user.id
+        });
+
+        if (error) throw error;
+
+        res.json(data);
+    } catch (error) {
+        console.error('Error getting recent years summary:', error);
+        res.status(500).json({ error: 'Failed to get recent years summary' });
+    }
+});
+
 module.exports = router;
