@@ -1134,7 +1134,6 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM public.profiles
         WHERE id = user_id_param
-        AND id = auth.uid()
     ) THEN
         RAISE EXCEPTION 'Not authorized';
     END IF;
@@ -1150,16 +1149,15 @@ BEGIN
         GROUP BY EXTRACT(YEAR FROM date)
     )
     SELECT 
-        year,
+        yearly_totals.year,
         income as total_income,
         expense as total_expense,
         (income - expense) as net_amount
     FROM yearly_totals
-    ORDER BY year DESC
+    ORDER BY yearly_totals.year DESC
     LIMIT 5;
 END;
 $$ LANGUAGE plpgsql SECURITY INVOKER;
 
 -- Set proper permissions
-REVOKE ALL ON FUNCTION get_recent_years_summary(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION get_recent_years_summary(UUID) TO authenticated;
