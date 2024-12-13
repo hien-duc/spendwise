@@ -110,7 +110,7 @@ router.get('/annual-transactions/:year', handleValidationErrors, async (req, res
  *                 investment_year_total:
  *                   type: number
  */
-router.get('/annual-trend/:year', validateYearMonth, handleValidationErrors, async (req, res) => {
+router.get('/annual-trend/:year', handleValidationErrors, async (req, res) => {
     try {
         const { data, error } = await supabase
             .rpc('get_annual_transactions_trend', {
@@ -159,7 +159,7 @@ router.get('/annual-trend/:year', validateYearMonth, handleValidationErrors, asy
  *                 transaction_type:
  *                   type: string
  */
-router.get('/annual-categories/:year', validateYearMonth, handleValidationErrors, async (req, res) => {
+router.get('/annual-categories/:year', handleValidationErrors, async (req, res) => {
     try {
         const { data, error } = await supabase
             .rpc('get_annual_categories_summary', {
