@@ -49,7 +49,7 @@ const { validateYearMonth, handleValidationErrors } = require('../middleware/val
  *                 year_to_date_investment_total:
  *                   type: number
  */
-router.get('/annual-transactions/:year', validateYearMonth, handleValidationErrors, async (req, res) => {
+router.get('/annual-transactions/:year', handleValidationErrors, async (req, res) => {
     try {
         const { data, error } = await supabase
             .rpc('get_annual_transactions_report', {
