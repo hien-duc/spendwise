@@ -102,7 +102,7 @@ const handleValidationErrors = (req, res, next) => {
  *       500:
  *         description: Server error
  */
-router.get('/goals', async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const userId = req.query.userId;
         if (!userId) {
@@ -150,7 +150,7 @@ router.get('/goals', async (req, res) => {
  *       500:
  *         description: Server error
  */
-router.get('/goals/:id', async (req, res) => {
+router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.query.userId;
@@ -202,7 +202,7 @@ router.get('/goals/:id', async (req, res) => {
  *       500:
  *         description: Server error
  */
-router.post('/goals', validateGoal, handleValidationErrors, async (req, res) => {
+router.post('/', validateGoal, handleValidationErrors, async (req, res) => {
     try {
         const { name, target_amount, current_amount = 0, deadline, status = 'in_progress', user_id } = req.body;
 
@@ -263,7 +263,7 @@ router.post('/goals', validateGoal, handleValidationErrors, async (req, res) => 
  *       500:
  *         description: Server error
  */
-router.put('/goals/:id', validateGoal, handleValidationErrors, async (req, res) => {
+router.put('/:id', validateGoal, handleValidationErrors, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, target_amount, current_amount, deadline, status, user_id } = req.body;
@@ -316,7 +316,7 @@ router.put('/goals/:id', validateGoal, handleValidationErrors, async (req, res) 
  *       500:
  *         description: Server error
  */
-router.delete('/goals/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.query.userId;
