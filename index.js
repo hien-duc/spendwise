@@ -57,7 +57,7 @@ app.use(async (req, res, next) => {
 });
 
 // Protected API routes
-app.use(['/api/transactions', '/api/financial'], authenticateUser, transactionsRouter);
+app.use(['/api/transactions'], authenticateUser, transactionsRouter);
 app.use('/api/categories', authenticateUser, categoriesRouter);
 app.use('/api/reports', authenticateUser, reportsRouter);
 app.use('/api/profiles', authenticateUser, profilesRouter);
