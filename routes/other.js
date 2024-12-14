@@ -309,4 +309,94 @@ router.get('/recent-years-summary', async (req, res) => {
     }
 });
 
+
+/**
+ * @swagger
+ * /api/other/top-categories-all-time:
+ *   get:
+ *     summary: Get top 5 categories by percentage with remaining as 'others' for all time
+ *     tags: [Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Top 5 categories with their percentages and others combined for all time
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   category:
+ *                     type: string
+ *                   percentage:
+ *                     type: number
+ *                   icon:
+ *                     type: string
+ *                   color:
+ *                     type: string
+ */
+router.get('/top-categories-all-time', handleValidationErrors, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .rpc('get_top_categories_percentage_all_time', {
+                user_id_param: req.user.id
+            });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * @swagger
+ * /api/other/top-categories-recent-years:
+ *   get:
+ *     summary: Get top 5 categories by percentage for the most recent 5 years
+ *     tags: [Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Top 5 categories with their percentages for each of the last 5 years
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   year:
+ *                     type: integer
+ *                   categories:
+ *                     type: array
+ *                     items:
+ *                       type: object
+ *                       properties:
+ *                         category:
+ *                           type: string
+ *                         percentage:
+ *                           type: number
+ *                         icon:
+ *                           type: string
+ *                         color:
+ *                           type: string
+ */
+router.get('/top-categories-recent-years', handleValidationErrors, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .rpc('get_top_categories_recent_years', {
+                user_id_param: req.user.id
+            });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;

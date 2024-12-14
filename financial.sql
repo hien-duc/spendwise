@@ -623,7 +623,7 @@ $$ language plpgsql;
 -- Combined all-time category analysis function
 -- all time category report
 CREATE OR REPLACE FUNCTION get_all_time_categories_summary(
-    user_id UUID
+    user_id_param UUID
 )
 RETURNS TABLE (
     category_name TEXT,
@@ -645,8 +645,8 @@ BEGIN
         FROM categories c
         LEFT JOIN transactions t ON 
             t.category_id = c.id AND
-            t.user_id = user_id
-        WHERE c.user_id = user_id
+            t.user_id = user_id_param
+        WHERE c.user_id = user_id_param
         GROUP BY c.id, c.name, c.icon, c.color, c.type
     ),
     type_totals AS (
@@ -1121,6 +1121,64 @@ CREATE INDEX IF NOT EXISTS idx_fixed_investments_category_id ON public.fixed_inv
 CREATE INDEX IF NOT EXISTS idx_fixed_investments_frequency ON public.fixed_investments(frequency);
 CREATE INDEX IF NOT EXISTS idx_fixed_investments_investment_type ON public.fixed_investments(investment_type);
 
+
+-- Function to get top 5 categories by percentage with others combined for all time
+CREATE OR REPLACE FUNCTION get_top_categories_percentage_all_time(
+    user_id_param UUID
+)
+RETURNS TABLE (
+    category TEXT,
+    percentage DECIMAL(12,2),
+    icon TEXT,
+    color TEXT,
+    is_others INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH category_totals AS (
+        SELECT 
+            c.name as categoryTemp,
+            c.icon as iconTemp,
+            c.color as colorTemp,
+            SUM(t.amount) as total_amount
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE t.user_id = user_id_param
+        GROUP BY c.name, c.icon, c.color
+    ),
+    total_sum AS (
+        SELECT SUM(total_amount) as grand_total
+        FROM category_totals
+    ),
+    top_5_categories AS (
+        SELECT 
+            categoryTemp,
+            ROUND((total_amount * 100.0 / grand_total)::numeric, 2) as percentageTemp,
+            iconTemp,
+            colorTemp,
+            0 AS is_othersTemp
+        FROM category_totals, total_sum
+        ORDER BY total_amount DESC
+        LIMIT 5
+    ),
+    others AS (
+        SELECT 
+            'Others' as categoryTemp,
+            ROUND((100 - SUM(percentageTemp))::numeric, 2) as percentageTemp,
+            'more-horiz' as iconTemp,
+            '#808080' as colorTemp,
+            1 AS is_othersTemp
+        FROM top_5_categories
+    )
+    SELECT categoryTemp, percentageTemp, iconTemp, colorTemp, is_othersTemp
+    FROM top_5_categories
+    UNION ALL
+    SELECT categoryTemp, percentageTemp, iconTemp, colorTemp, is_othersTemp
+    FROM others
+    ORDER BY is_othersTemp, percentageTemp DESC;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Get financial summary for 5 most recent years
 CREATE OR REPLACE FUNCTION get_recent_years_summary(user_id_param UUID)
 RETURNS TABLE (
@@ -1161,3 +1219,99 @@ $$ LANGUAGE plpgsql SECURITY INVOKER;
 
 -- Set proper permissions
 GRANT EXECUTE ON FUNCTION get_recent_years_summary(UUID) TO authenticated;
+
+CREATE OR REPLACE FUNCTION get_top_categories_recent_years(
+    user_id_param UUID
+)
+RETURNS TABLE (
+    year INTEGER,
+    categories JSON
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH recent_years AS (
+        SELECT DISTINCT
+            EXTRACT(YEAR FROM t.date)::integer as yearTempI
+        FROM transactions t
+        WHERE user_id = user_id_param
+        ORDER BY yearTempI DESC
+        LIMIT 5
+    ),
+    category_totals AS (
+        SELECT 
+            EXTRACT(YEAR FROM t.date)::integer as yearTemp,
+            c.name as categoryTemp,
+            c.icon as iconTemp,
+            c.color as colorTemp,
+            SUM(t.amount) as total_amount
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE t.user_id = user_id_param
+        AND EXTRACT(YEAR FROM t.date) IN (SELECT yearTempI FROM recent_years)
+        GROUP BY EXTRACT(YEAR FROM t.date), c.name, c.icon, c.color
+    ),
+    yearly_totals AS (
+        SELECT 
+            ct.yearTemp,
+            SUM(total_amount) as grand_total
+        FROM category_totals ct
+        GROUP BY ct.yearTemp
+    ),
+    top_categories AS (
+        SELECT 
+            ct.yearTemp as yearTemp,
+            ct.categoryTemp as categoryTemp,
+            ROUND((ct.total_amount * 100.0 / yt.grand_total)::numeric, 2) as percentageTemp,
+            ct.iconTemp as iconTemp,
+            ct.colorTemp as colorTemp,
+            ROW_NUMBER() OVER (PARTITION BY ct.yearTemp ORDER BY ct.total_amount DESC) as rankTemp,
+            0 AS is_othersTemp
+        FROM category_totals ct
+        JOIN yearly_totals yt ON ct.yearTemp = yt.yearTemp
+    ),
+    top_5_with_others AS (
+        SELECT 
+            yearTemp,
+            jsonb_agg(
+                jsonb_build_object(
+                    'category', categoryTemp,
+                    'percentage', percentageTemp,
+                    'icon', iconTemp,
+                    'color', colorTemp,
+                    'is_others', is_othersTemp
+                )
+                ORDER BY 
+                    is_othersTemp, percentageTemp DESC
+            ) as categories
+        FROM (
+            SELECT 
+                yearTemp,
+                categoryTemp,
+                percentageTemp,
+                iconTemp,
+                colorTemp,
+                is_othersTemp
+            FROM top_categories
+            WHERE rankTemp <= 5
+            UNION ALL
+            SELECT 
+                yearTemp,
+                'Others' as category,
+                ROUND((100 - SUM(tc.percentageTemp))::numeric, 2) as percentageTemp,
+                'ellipsis-h' as iconTemp,
+                '#808080' as colorTemp,
+                1 AS is_othersTemp
+            FROM top_categories tc
+            WHERE rankTemp <= 5
+            GROUP BY yearTemp
+        ) combined_data
+        GROUP BY yearTemp
+    )
+    SELECT 
+        ry.yearTempI,
+        COALESCE(two.categories::json, '[]'::json) as categories
+    FROM recent_years ry
+    LEFT JOIN top_5_with_others two ON ry.yearTempI = two.yearTemp
+    ORDER BY ry.yearTempI DESC;
+END;
+$$ LANGUAGE plpgsql;
