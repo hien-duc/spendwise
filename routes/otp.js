@@ -1,16 +1,16 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const pool = require('../db');
-const nodemailer = require('nodemailer');
-const { authenticateToken } = require('../middleware/authorization');
+const pool = require("../db");
+const nodemailer = require("nodemailer");
+const { authenticateToken } = require("../middleware/authorization");
 
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  service: "gmail",
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
-  }
+    pass: process.env.EMAIL_PASSWORD,
+  },
 });
 
 // Generate a random 6-digit OTP
@@ -23,7 +23,7 @@ const sendOTPEmail = async (email, otp) => {
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: email,
-    subject: 'Your SpendWise Verification Code',
+    subject: "Your SpendWise Verification Code",
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #00B152;">SpendWise Verification Code</h2>
@@ -34,14 +34,14 @@ const sendOTPEmail = async (email, otp) => {
         <p>If you didn't request this code, please ignore this email.</p>
         <p>Best regards,<br>SpendWise Team</p>
       </div>
-    `
+    `,
   };
 
   return transporter.sendMail(mailOptions);
 };
 
 // Send OTP
-router.post('/send', async (req, res) => {
+router.post("/send", async (req, res) => {
   try {
     const { email } = req.body;
     const otp = generateOTP();
@@ -49,22 +49,22 @@ router.post('/send', async (req, res) => {
 
     // Store OTP in database
     await pool.query(
-      'INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)',
+      "INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)",
       [email, otp, expiresAt]
     );
 
     // Send OTP via email
     await sendOTPEmail(email, otp);
 
-    res.json({ message: 'OTP sent successfully' });
+    res.json({ message: "OTP sent successfully" });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to send OTP' });
+    res.status(500).json({ error: "Failed to send OTP" });
   }
 });
 
 // Verify OTP
-router.post('/verify', async (req, res) => {
+router.post("/verify", async (req, res) => {
   try {
     const { email, otp } = req.body;
 
@@ -81,30 +81,30 @@ router.post('/verify', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid or expired OTP' });
+      return res.status(400).json({ error: "Invalid or expired OTP" });
     }
 
     // Mark OTP as verified
     await pool.query(
-      'UPDATE otp_verifications SET verified = true WHERE id = $1',
+      "UPDATE otp_verifications SET verified = true WHERE id = $1",
       [result.rows[0].id]
     );
 
-    res.json({ message: 'OTP verified successfully' });
+    res.json({ message: "OTP verified successfully" });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to verify OTP' });
+    res.status(500).json({ error: "Failed to verify OTP" });
   }
 });
 
 // Resend OTP
-router.post('/resend', async (req, res) => {
+router.post("/resend", async (req, res) => {
   try {
     const { email } = req.body;
 
     // Invalidate previous OTPs
     await pool.query(
-      'UPDATE otp_verifications SET expires_at = NOW() WHERE email = $1 AND verified = false',
+      "UPDATE otp_verifications SET expires_at = NOW() WHERE email = $1 AND verified = false",
       [email]
     );
 
@@ -113,17 +113,17 @@ router.post('/resend', async (req, res) => {
 
     // Store new OTP in database
     await pool.query(
-      'INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)',
+      "INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)",
       [email, otp, expiresAt]
     );
 
     // Send new OTP via email
     await sendOTPEmail(email, otp);
 
-    res.json({ message: 'OTP resent successfully' });
+    res.json({ message: "OTP resent successfully" });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to resend OTP' });
+    res.status(500).json({ error: "Failed to resend OTP" });
   }
 });
 
