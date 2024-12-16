@@ -38,7 +38,10 @@ const supabase = createClient(
 
 // Auth middleware
 app.use(async (req, res, next) => {
-    if (req.path === '/api-docs' || req.path.startsWith('/api-docs/')) {
+    // Skip auth for Swagger docs and OTP routes
+    if (req.path === '/api-docs' || 
+        req.path.startsWith('/api-docs/') || 
+        req.path.startsWith('/api/otp/')) {
         return next();
     }
 

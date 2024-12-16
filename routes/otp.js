@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
-const pool = require("../db");
+const { supabase } = require("../supabase");
 const nodemailer = require("nodemailer");
-const { authenticateToken } = require("../middleware/authorization");
+// const { authenticateToken } = require("../middleware/authorization");
 
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
@@ -48,10 +48,19 @@ router.post("/send", async (req, res) => {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
 
     // Store OTP in database
-    await pool.query(
-      "INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)",
-      [email, otp, expiresAt]
-    );
+    const { data, error } = await supabase
+      .from("otp_verifications")
+      .insert([
+        {
+          email,
+          otp_code: otp,
+          expires_at: expiresAt,
+        },
+      ]);
+
+    if (error) {
+      throw error;
+    }
 
     // Send OTP via email
     await sendOTPEmail(email, otp);
@@ -69,26 +78,33 @@ router.post("/verify", async (req, res) => {
     const { email, otp } = req.body;
 
     // Get the latest unverified OTP for the email
-    const result = await pool.query(
-      `SELECT * FROM otp_verifications 
-       WHERE email = $1 
-       AND otp_code = $2 
-       AND verified = false 
-       AND expires_at > NOW() 
-       ORDER BY created_at DESC 
-       LIMIT 1`,
-      [email, otp]
-    );
+    const { data, error } = await supabase
+      .from("otp_verifications")
+      .select()
+      .eq("email", email)
+      .eq("otp_code", otp)
+      .eq("verified", false)
+      .gt("expires_at", new Date())
+      .order("created_at", { ascending: false })
+      .limit(1);
 
-    if (result.rows.length === 0) {
+    if (error) {
+      throw error;
+    }
+
+    if (data.length === 0) {
       return res.status(400).json({ error: "Invalid or expired OTP" });
     }
 
     // Mark OTP as verified
-    await pool.query(
-      "UPDATE otp_verifications SET verified = true WHERE id = $1",
-      [result.rows[0].id]
-    );
+    const { error: updateError } = await supabase
+      .from("otp_verifications")
+      .update({ verified: true })
+      .eq("id", data[0].id);
+
+    if (updateError) {
+      throw updateError;
+    }
 
     res.json({ message: "OTP verified successfully" });
   } catch (error) {
@@ -103,19 +119,33 @@ router.post("/resend", async (req, res) => {
     const { email } = req.body;
 
     // Invalidate previous OTPs
-    await pool.query(
-      "UPDATE otp_verifications SET expires_at = NOW() WHERE email = $1 AND verified = false",
-      [email]
-    );
+    const { error: invalidateError } = await supabase
+      .from("otp_verifications")
+      .update({ expires_at: new Date() })
+      .eq("email", email)
+      .eq("verified", false);
+
+    if (invalidateError) {
+      throw invalidateError;
+    }
 
     const otp = generateOTP();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
 
     // Store new OTP in database
-    await pool.query(
-      "INSERT INTO otp_verifications (email, otp_code, expires_at) VALUES ($1, $2, $3)",
-      [email, otp, expiresAt]
-    );
+    const { data, error } = await supabase
+      .from("otp_verifications")
+      .insert([
+        {
+          email,
+          otp_code: otp,
+          expires_at: expiresAt,
+        },
+      ]);
+
+    if (error) {
+      throw error;
+    }
 
     // Send new OTP via email
     await sendOTPEmail(email, otp);
