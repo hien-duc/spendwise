@@ -16,6 +16,7 @@ const financialGoalsRouter = require('./routes/financial_goals');
 const fixedCostsRouter = require('./routes/fixed_costs');
 const periodicIncomeRouter = require('./routes/periodic_income');
 const fixedInvestmentsRouter = require('./routes/fixed_investments');
+const otpRouter = require('./routes/otp');
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.use('/api/financial/financial-goals', authenticateUser, financialGoalsRouter
 app.use('/api/financial/fixed-costs', authenticateUser, fixedCostsRouter);
 app.use('/api/financial/periodic-income', authenticateUser, periodicIncomeRouter);
 app.use('/api/financial/fixed-investments', authenticateUser, fixedInvestmentsRouter);
+app.use('/api/otp', otpRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

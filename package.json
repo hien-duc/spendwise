@@ -11,7 +11,9 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "setupFiles": ["dotenv/config"],
+    "setupFiles": [
+      "dotenv/config"
+    ],
     "testTimeout": 10000
   },
   "keywords": [],
@@ -27,6 +29,7 @@
     "express-validator": "^7.0.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.16",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0"
   },

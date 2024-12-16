@@ -1220,6 +1220,32 @@ $$ LANGUAGE plpgsql SECURITY INVOKER;
 -- Set proper permissions
 GRANT EXECUTE ON FUNCTION get_recent_years_summary(UUID) TO authenticated;
 
+-- -- Create OTP verifications table
+-- CREATE TABLE otp_verifications (
+--     id SERIAL PRIMARY KEY,
+--     email VARCHAR(255) NOT NULL,
+--     otp_code VARCHAR(6) NOT NULL,
+--     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     expires_at TIMESTAMP NOT NULL,
+--     verified BOOLEAN DEFAULT FALSE
+-- );
+
+-- -- Create index for faster queries
+-- CREATE INDEX idx_otp_verifications_email ON otp_verifications(email);
+
+-- Create OTP verifications table
+CREATE TABLE otp_verifications (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    otp_code VARCHAR(6) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    verified BOOLEAN DEFAULT FALSE
+);
+
+-- Create index for faster queries
+CREATE INDEX idx_otp_verifications_email ON otp_verifications(email);
+
 CREATE OR REPLACE FUNCTION get_top_categories_recent_years(
     user_id_param UUID
 )
