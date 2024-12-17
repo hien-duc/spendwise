@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./docs/swagger");
@@ -16,8 +17,11 @@ const financialGoalsRouter = require("./routes/financial_goals");
 const fixedCostsRouter = require("./routes/fixed_costs");
 const periodicIncomeRouter = require("./routes/periodic_income");
 const fixedInvestmentsRouter = require("./routes/fixed_investments");
-
+const authRouter = require("./routes/confirm_email");
 const app = express();
+const { supabase } = require("./supabase");
+
+app.use("/auth", authRouter);
 
 // Middleware
 app.use(cors());
@@ -33,16 +37,15 @@ app.use(
   })
 );
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
 // Auth middleware
 app.use(async (req, res, next) => {
-  // Skip auth for Swagger docs and OTP routes
-  if (req.path === "/api-docs" || req.path.startsWith("/api-docs/")) {
+  // Skip auth for Swagger docs
+  if (
+    req.path === "/api-docs" ||
+    req.path.startsWith("/api-docs/") ||
+    req.path === "/auth/confirm_email" ||
+    req.path.startsWith("/auth/confirm_email")
+  ) {
     return next();
   }
 
